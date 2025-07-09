@@ -54,9 +54,7 @@ public static class LettuceEncryptServiceCollectionExtensions
             .AddSingleton<IConsole>(PhysicalConsole.Singleton)
             .AddSingleton<IClock, SystemClock>()
             .AddSingleton<TermsOfServiceChecker>()
-            .AddSingleton<IHostedService, StartupCertificateLoader>()
             .AddSingleton<ICertificateSource, DeveloperCertLoader>()
-            .AddSingleton<IHostedService, AcmeCertificateLoader>()
             .AddSingleton<AcmeCertificateFactory>()
             .AddSingleton<AcmeClientFactory>()
             .AddSingleton<IHttpChallengeResponseStore, InMemoryHttpChallengeResponseStore>()
@@ -65,8 +63,9 @@ public static class LettuceEncryptServiceCollectionExtensions
             .AddSingleton<ICertificateRepository>(x => x.GetRequiredService<X509CertStore>())
             .AddSingleton<HttpChallengeResponseMiddleware>()
             .AddSingleton<TlsAlpnChallengeResponder>()
-            .AddSingleton<IStartupFilter, HttpChallengeStartupFilter>()
             .AddSingleton<IDnsChallengeProvider, NoOpDnsChallengeProvider>();
+
+        services.TryAddEnumerable(ServiceDescriptor.Transient<IStartupFilter, HttpChallengeStartupFilter>());
 
         services.AddSingleton<IConfigureOptions<LettuceEncryptOptions>>(s =>
         {
@@ -89,6 +88,9 @@ public static class LettuceEncryptServiceCollectionExtensions
 
         // PfxBuilderFactory is stateless, so there's no need for a transient registration
         services.AddSingleton<IPfxBuilderFactory, PfxBuilderFactory>();
+
+        services.AddHostedService<StartupCertificateLoader>();
+        services.AddHostedService<AcmeCertificateLoader>();
 
         return new LettuceEncryptServiceBuilder(services);
     }

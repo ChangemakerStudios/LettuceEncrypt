@@ -141,7 +141,7 @@ internal class AcmeCertificateFactory
             return false;
         }
 
-        _logger.LogInformation("Using existing account for {contact}", existingAccount.Contact);
+        _logger.LogInformation("Using existing account {@ExistingAccount} for renewal", existingAccount);
 
         if (existingAccount.TermsOfServiceAgreed != true)
         {

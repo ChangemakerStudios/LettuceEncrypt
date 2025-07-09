@@ -6,23 +6,12 @@ using Microsoft.Extensions.Hosting;
 
 namespace LettuceEncrypt.Internal;
 
-internal class StartupCertificateLoader : IHostedService
+internal class StartupCertificateLoader(IEnumerable<ICertificateSource> certSources, CertificateSelector selector) : IHostedService
 {
-    private readonly IEnumerable<ICertificateSource> _certSources;
-    private readonly CertificateSelector _selector;
-
-    public StartupCertificateLoader(
-        IEnumerable<ICertificateSource> certSources,
-        CertificateSelector selector)
-    {
-        _certSources = certSources;
-        _selector = selector;
-    }
-
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var allCerts = new List<X509Certificate2>();
-        foreach (var certSource in _certSources)
+        foreach (var certSource in certSources)
         {
             var certs = await certSource.GetCertificatesAsync(cancellationToken);
             allCerts.AddRange(certs);
@@ -31,7 +20,7 @@ internal class StartupCertificateLoader : IHostedService
         // Add newer certificates first. This avoid potentially unnecessary cert validations on older certificates
         foreach (var cert in allCerts.OrderByDescending(c => c.NotAfter))
         {
-            _selector.Add(cert);
+            selector.Add(cert);
         }
     }
 
