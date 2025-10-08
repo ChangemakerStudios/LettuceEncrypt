@@ -8,7 +8,6 @@
     <Description>A class library for managing HTTPS certificates with ASP.NET Core.
 
 This library includes API for dynamically selecting which HTTPS certificate to use in Kestrel.</Description>
-    <PackageVersion Condition="'$(IncludePreReleaseLabelInPackageVersion)' == 'true'">$(PackageVersion)-$(VersionSuffix)</PackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
