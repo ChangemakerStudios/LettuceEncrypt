@@ -26,7 +26,7 @@ internal class AcmeCertificateLoader(
 {
     private readonly ILogger _logger = logger;
 
-    public TimeSpan RunDelay = TimeSpan.FromSeconds(5);
+    public TimeSpan RunDelay => options.Value.StartupRunDelay;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -34,6 +34,7 @@ internal class AcmeCertificateLoader(
             async () =>
             {
                 appLifetime.ApplicationStarted.WaitHandle.WaitOne();
+
                 _logger.LogInformation("App Started -- Running Acme Certificate Loader in {DelaySeconds} Seconds", this.RunDelay.TotalSeconds);
 
                 await Task.Delay(this.RunDelay, stoppingToken);

@@ -103,4 +103,10 @@ public class LettuceEncryptOptions
     /// Optional EAB (External Account Binding) account credentials used for creating new account.
     /// </summary>
     public EabCredentials EabCredentials { get; set; } = new();
+
+    /// <summary>
+    /// The delay before the ACME Certificate Renewal Starts After Startup.
+    /// Default is 5 seconds. But for container setups with healthchecks, may need to be longer.
+    /// </summary>
+    public TimeSpan StartupRunDelay { get; set; } = TimeSpan.FromSeconds(5);
 }
