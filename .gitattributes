@@ -19,8 +19,8 @@
 # Bash scripts should use LF
 *.sh text eol=lf
 
-# Powershell scripts should use CRLF
-*.ps1 text eol=crlf
+# PowerShell scripts should use LF (for cross-platform compatibility and GitHub Actions)
+*.ps1 text eol=lf
 
 # Documentation
 *.md text diff=markdown
