@@ -63,6 +63,12 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
 
             var certificate = await certificateClient.GetCertificateAsync(normalizedName, token);
 
+            if (certificate?.Value?.Cer == null)
+            {
+                _logger.LogWarning("Certificate response for {domainName} was null or empty", domainName);
+                return null;
+            }
+
             return new X509Certificate2(certificate.Value.Cer);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -94,6 +100,12 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
             var secretClient = _secretClientFactory.Create();
 
             var certificate = await secretClient.GetSecretAsync(normalizedName, null, token);
+
+            if (certificate?.Value?.Value == null)
+            {
+                _logger.LogWarning("Certificate secret for {domainName} was null or empty", domainName);
+                return null;
+            }
 
             var certBytes = Convert.FromBase64String(certificate.Value.Value);
             var cert = new X509Certificate2(certBytes, (string?)null, X509KeyStorageFlags.Exportable);
