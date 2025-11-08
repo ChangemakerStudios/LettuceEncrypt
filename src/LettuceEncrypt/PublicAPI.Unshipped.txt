@@ -1,1 +1,7 @@
 #nullable enable
+LettuceEncrypt.LettuceEncryptOptions.ValidationTimeout.get -> System.TimeSpan
+LettuceEncrypt.LettuceEncryptOptions.ValidationTimeout.set -> void
+LettuceEncrypt.LettuceEncryptOptions.ValidationPollInterval.get -> System.TimeSpan
+LettuceEncrypt.LettuceEncryptOptions.ValidationPollInterval.set -> void
+LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.get -> bool
+LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.set -> void
