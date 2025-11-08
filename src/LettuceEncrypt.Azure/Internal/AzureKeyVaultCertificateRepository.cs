@@ -38,9 +38,14 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         {
             var cert = await GetCertificateWithPrivateKeyAsync(domain, cancellationToken);
 
-            if (cert != null)
+            if (cert != null && IsCertificateValid(cert, domain))
             {
                 certs.Add(cert);
+            }
+            else if (cert != null)
+            {
+                // Certificate was retrieved but is invalid, dispose it
+                cert.Dispose();
             }
         }
 
@@ -49,7 +54,7 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
 
     private async Task<X509Certificate2?> GetCertificateAsync(string domainName, CancellationToken token)
     {
-        _logger.LogInformation("Searching for certificate in KeyVault for {domainName}", domainName);
+        _logger.LogDebug("Searching for certificate metadata in KeyVault for {domainName}", domainName);
 
         try
         {
@@ -62,25 +67,26 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
-            _logger.LogWarning("Could not find certificate for {domainName} in Azure KeyVault", domainName);
+            _logger.LogDebug("Could not find certificate for {domainName} in Azure KeyVault", domainName);
+            return null;
         }
         catch (CredentialUnavailableException ex)
         {
             _logger.LogError(ex, "Could not retrieve credentials for Azure Key Vault");
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Unexpected error attempting to retrieve certificate for {domainName} from Azure KeyVault. Verify settings and try again.",
                 domainName);
+            throw;
         }
-
-        return null;
     }
 
     private async Task<X509Certificate2?> GetCertificateWithPrivateKeyAsync(string domainName, CancellationToken token)
     {
-        _logger.LogDebug("Searching for certificate in KeyVault for {domainName}", domainName);
+        _logger.LogDebug("Searching for certificate with private key in KeyVault for {domainName}", domainName);
 
         try
         {
@@ -89,7 +95,8 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
 
             var certificate = await secretClient.GetSecretAsync(normalizedName, null, token);
 
-            var cert = new X509Certificate2(Convert.FromBase64String(certificate.Value.Value));
+            var certBytes = Convert.FromBase64String(certificate.Value.Value);
+            var cert = new X509Certificate2(certBytes, (string?)null, X509KeyStorageFlags.Exportable);
 
             _logger.LogInformation(
                 "Found certificate for {domainName} from Azure Key Vault with thumbprint {thumbprint}",
@@ -99,20 +106,21 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
-            _logger.LogInformation("Could not find certificate for {domainName} in Azure KeyVault", domainName);
+            _logger.LogDebug("Could not find certificate for {domainName} in Azure KeyVault", domainName);
+            return null;
         }
         catch (CredentialUnavailableException ex)
         {
             _logger.LogError(ex, "Could not retrieve credentials for Azure Key Vault");
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Unexpected error attempting to retrieve certificate for {domainName} from Azure KeyVault. Verify settings and try again.",
                 domainName);
+            throw;
         }
-
-        return null;
     }
 
     public async Task SaveAsync(X509Certificate2 certificate, CancellationToken cancellationToken)
@@ -124,7 +132,7 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         if (!await ShouldImportVersionAsync(domainName, certificate, cancellationToken))
         {
             _logger.LogInformation(
-                "Certificate for {domainName} is already up-to-date in Azure KeyVault. Skipping importing.",
+                "Certificate for {domainName} is already up-to-date in Azure KeyVault. Skipping import.",
                 domainName);
             return;
         }
@@ -132,15 +140,20 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         byte[] exported;
         try
         {
-            exported = certificate.Export(X509ContentType.Pfx);
+            // Export with empty password for compatibility with Azure Key Vault
+            // Azure Key Vault will manage the certificate security
+            exported = certificate.Export(X509ContentType.Pfx, string.Empty);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to export {domainName} certificate", domainName);
-            return;
+            _logger.LogError(ex, "Failed to export certificate for {domainName}. Cannot save to Azure KeyVault.", domainName);
+            throw new InvalidOperationException($"Failed to export certificate for {domainName}", ex);
         }
 
-        var options = new ImportCertificateOptions(NormalizeHostName(domainName), exported);
+        var options = new ImportCertificateOptions(NormalizeHostName(domainName), exported)
+        {
+            Enabled = true
+        };
 
         try
         {
@@ -148,11 +161,17 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
 
             await certificateClient.ImportCertificateAsync(options, cancellationToken);
 
-            _logger.LogInformation("Imported certificate into Azure KeyVault for {domainName}", domainName);
+            _logger.LogInformation("Successfully imported certificate into Azure KeyVault for {domainName}", domainName);
         }
         catch (RequestFailedException ex)
         {
-            _logger.LogWarning(ex, "Failed to save {domainName} certificate to Azure KeyVault", domainName);
+            _logger.LogError(ex, "Failed to save certificate for {domainName} to Azure KeyVault", domainName);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error saving certificate for {domainName} to Azure KeyVault", domainName);
+            throw;
         }
     }
 
@@ -167,6 +186,42 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         }
 
         return !string.Equals(certificate.Thumbprint, other.Thumbprint, StringComparison.Ordinal);
+    }
+
+    private bool IsCertificateValid(X509Certificate2 certificate, string domainName)
+    {
+        // Check if certificate has expired
+        if (certificate.NotAfter < DateTime.UtcNow)
+        {
+            _logger.LogWarning(
+                "Certificate for {domainName} has expired (NotAfter: {NotAfter}). It will not be used.",
+                domainName, certificate.NotAfter);
+            return false;
+        }
+
+        // Check if certificate is not yet valid
+        if (certificate.NotBefore > DateTime.UtcNow)
+        {
+            _logger.LogWarning(
+                "Certificate for {domainName} is not yet valid (NotBefore: {NotBefore}). It will not be used.",
+                domainName, certificate.NotBefore);
+            return false;
+        }
+
+        // Check if certificate has a private key
+        if (!certificate.HasPrivateKey)
+        {
+            _logger.LogWarning(
+                "Certificate for {domainName} does not have a private key. It will not be used.",
+                domainName);
+            return false;
+        }
+
+        _logger.LogDebug(
+            "Certificate for {domainName} is valid (NotBefore: {NotBefore}, NotAfter: {NotAfter})",
+            domainName, certificate.NotBefore, certificate.NotAfter);
+
+        return true;
     }
 
     /// <summary>
