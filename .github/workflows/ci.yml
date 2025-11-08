@@ -52,7 +52,7 @@ jobs:
       - uses: codecov/codecov-action@v4
         with:
           name: unittests-${{ matrix.os }}
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
   release:
     if: ${{ github.event.inputs.release }}

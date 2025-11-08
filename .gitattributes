@@ -1,0 +1,47 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Custom for Visual Studio
+*.cs     diff=csharp
+*.sln    text eol=crlf merge=union
+*.csproj text eol=crlf merge=union
+*.vbproj text eol=crlf merge=union
+*.vcxproj text eol=crlf merge=union
+*.vcproj text eol=crlf merge=union
+*.dbproj text eol=crlf merge=union
+*.fsproj text eol=crlf merge=union
+*.lsproj text eol=crlf merge=union
+*.wixproj text eol=crlf merge=union
+*.modelproj text eol=crlf merge=union
+*.sqlproj text eol=crlf merge=union
+*.wwaproj text eol=crlf merge=union
+
+# Bash scripts should use LF
+*.sh text eol=lf
+
+# PowerShell scripts should use LF (for cross-platform compatibility and GitHub Actions)
+*.ps1 text eol=lf
+
+# Documentation
+*.md text diff=markdown
+*.txt text
+*.rst text
+
+# Graphics
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+
+# Archives
+*.gz binary
+*.tar binary
+*.zip binary
+
+# Fonts
+*.ttf binary
+*.eot binary
+*.woff binary
+*.woff2 binary
