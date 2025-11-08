@@ -12,9 +12,15 @@ internal class TlsAlpn01DomainValidator : DomainOwnershipValidator
 {
     private readonly TlsAlpnChallengeResponder _tlsAlpnChallengeResponder;
 
-    public TlsAlpn01DomainValidator(TlsAlpnChallengeResponder tlsAlpnChallengeResponder,
+    public TlsAlpn01DomainValidator(
+        TlsAlpnChallengeResponder tlsAlpnChallengeResponder,
         IHostApplicationLifetime appLifetime,
-        AcmeClient client, ILogger logger, string domainName) : base(appLifetime, client, logger, domainName)
+        AcmeClient client,
+        ILogger logger,
+        string domainName,
+        TimeSpan validationTimeout,
+        TimeSpan validationPollInterval)
+        : base(appLifetime, client, logger, domainName, validationTimeout, validationPollInterval)
     {
         _tlsAlpnChallengeResponder = tlsAlpnChallengeResponder;
     }

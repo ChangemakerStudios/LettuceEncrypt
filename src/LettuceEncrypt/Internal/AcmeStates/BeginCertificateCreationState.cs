@@ -14,11 +14,16 @@ internal class BeginCertificateCreationState : AcmeState
     private readonly AcmeCertificateFactory _acmeCertificateFactory;
     private readonly CertificateSelector _selector;
     private readonly IEnumerable<ICertificateRepository> _certificateRepositories;
+    private readonly RenewalFailureTracker _failureTracker;
 
     public BeginCertificateCreationState(
-        AcmeStateMachineContext context, ILogger<ServerStartupState> logger,
-        IOptions<LettuceEncryptOptions> options, AcmeCertificateFactory acmeCertificateFactory,
-        CertificateSelector selector, IEnumerable<ICertificateRepository> certificateRepositories)
+        AcmeStateMachineContext context,
+        ILogger<ServerStartupState> logger,
+        IOptions<LettuceEncryptOptions> options,
+        AcmeCertificateFactory acmeCertificateFactory,
+        CertificateSelector selector,
+        IEnumerable<ICertificateRepository> certificateRepositories,
+        RenewalFailureTracker failureTracker)
         : base(context)
     {
         _logger = logger;
@@ -26,6 +31,7 @@ internal class BeginCertificateCreationState : AcmeState
         _acmeCertificateFactory = acmeCertificateFactory;
         _selector = selector;
         _certificateRepositories = certificateRepositories;
+        _failureTracker = failureTracker;
     }
 
     public override async Task<IAcmeState> MoveNextAsync(CancellationToken cancellationToken)
@@ -47,11 +53,25 @@ internal class BeginCertificateCreationState : AcmeState
                 cert.Thumbprint);
 
             await SaveCertificateAsync(cert, cancellationToken);
+
+            // Record success for all domains
+            foreach (var domain in domainNames)
+            {
+                _failureTracker.RecordSuccess(domain);
+            }
         }
         catch (Exception ex)
         {
+            // Record failure for all domains
+            foreach (var domain in domainNames)
+            {
+                _failureTracker.RecordFailure(domain, ex);
+            }
+
             _logger.LogError(0, ex, "Failed to automatically create a certificate for {hostname}", domainNames);
-            throw;
+
+            // Don't throw - return to CheckForRenewalState to implement backoff
+            // The exception has been logged and tracked
         }
 
         return MoveTo<CheckForRenewalState>();

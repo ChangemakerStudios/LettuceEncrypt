@@ -109,4 +109,22 @@ public class LettuceEncryptOptions
     /// Default is 5 seconds. But for container setups with healthchecks, may need to be longer.
     /// </summary>
     public TimeSpan StartupRunDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Maximum time to wait for domain validation to complete.
+    /// Default is 5 minutes. Increase for environments with slow DNS propagation or network latency.
+    /// </summary>
+    public TimeSpan ValidationTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Interval between polling attempts when waiting for domain validation.
+    /// Default is 2 seconds. Reduce for faster feedback in testing environments.
+    /// </summary>
+    public TimeSpan ValidationPollInterval { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Enable self-test of HTTP challenge endpoint before requesting validation from Let's Encrypt.
+    /// Default is true. Helps catch configuration issues early.
+    /// </summary>
+    public bool EnableChallengeSelfTest { get; set; } = true;
 }

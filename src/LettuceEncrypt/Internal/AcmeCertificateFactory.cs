@@ -236,23 +236,26 @@ internal class AcmeCertificateFactory
         cancellationToken.ThrowIfCancellationRequested();
 
         var validators = new List<DomainOwnershipValidator>();
+        var validationTimeout = _options.Value.ValidationTimeout;
+        var validationPollInterval = _options.Value.ValidationPollInterval;
+        var enableSelfTest = _options.Value.EnableChallengeSelfTest;
 
         if (_tlsAlpnChallengeResponder.IsEnabled)
         {
             validators.Add(new TlsAlpn01DomainValidator(
-                _tlsAlpnChallengeResponder, _appLifetime, _client, _logger, domainName));
+                _tlsAlpnChallengeResponder, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval));
         }
 
         if (_options.Value.AllowedChallengeTypes.HasFlag(ChallengeType.Http01))
         {
             validators.Add(new Http01DomainValidator(
-                _challengeStore, _appLifetime, _client, _logger, domainName));
+                _challengeStore, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval, enableSelfTest));
         }
 
         if (_options.Value.AllowedChallengeTypes.HasFlag(ChallengeType.Dns01))
         {
             validators.Add(new Dns01DomainValidator(
-                _dnsChallengeProvider, _appLifetime, _client, _logger, domainName));
+                _dnsChallengeProvider, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval));
         }
 
         if (validators.Count == 0)
@@ -263,23 +266,61 @@ internal class AcmeCertificateFactory
                 "Ensure at least one kind of these challenge types is configured: " + challengeTypes);
         }
 
+        _logger.LogInformation(
+            "Attempting domain validation for '{DomainName}' using {ValidatorCount} challenge method(s): {Validators}",
+            domainName,
+            validators.Count,
+            string.Join(", ", validators.Select(v => v.GetType().Name.Replace("DomainValidator", ""))));
+
+        var failures = new List<Exception>();
+
         foreach (var validator in validators)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var validatorName = validator.GetType().Name.Replace("DomainValidator", "");
+
             try
             {
+                _logger.LogDebug("Trying {ValidatorName} validation for domain '{DomainName}'",
+                    validatorName, domainName);
+
                 await validator.ValidateOwnershipAsync(authorizationContext, cancellationToken);
+
                 // The method above raises if validation fails. If no exception occurs, we assume validation completed successfully.
+                _logger.LogInformation(
+                    "Domain validation succeeded using {ValidatorName} for '{DomainName}'",
+                    validatorName, domainName);
                 return;
             }
             catch (Exception ex)
             {
-                _logger.LogDebug(ex, "Validation with {validatorType} failed with error: {error}",
-                    validator.GetType().Name, ex.Message);
+                failures.Add(ex);
+                _logger.LogWarning(ex,
+                    "Validation with {ValidatorName} failed for domain '{DomainName}'. " +
+                    "Error: {ErrorMessage}. " +
+                    "{RemainingValidators} validation method(s) remaining.",
+                    validatorName,
+                    domainName,
+                    ex.Message,
+                    validators.Count - failures.Count);
             }
         }
 
-        throw new InvalidOperationException($"Failed to validate ownership of domainName '{domainName}'");
+        // All validators failed
+        var failureDetails = string.Join("; ", failures.Select((ex, i) =>
+            $"{validators[i].GetType().Name.Replace("DomainValidator", "")}: {ex.Message}"));
+
+        _logger.LogError(
+            "All {ValidatorCount} validation methods failed for domain '{DomainName}'. Failures: {FailureDetails}",
+            validators.Count,
+            domainName,
+            failureDetails);
+
+        throw new AggregateException(
+            $"Failed to validate ownership of domainName '{domainName}' using any available challenge method. " +
+            $"Attempted: {string.Join(", ", validators.Select(v => v.GetType().Name.Replace("DomainValidator", "")))}. " +
+            $"See inner exceptions for details.",
+            failures);
     }
 
     private async Task<X509Certificate2> CompleteCertificateRequestAsync(IOrderContext order,

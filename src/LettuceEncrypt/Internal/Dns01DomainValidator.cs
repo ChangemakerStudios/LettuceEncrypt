@@ -19,8 +19,10 @@ internal class Dns01DomainValidator : DomainOwnershipValidator
         IHostApplicationLifetime appLifetime,
         AcmeClient client,
         ILogger logger,
-        string domainName
-    ) : base(appLifetime, client, logger, domainName)
+        string domainName,
+        TimeSpan validationTimeout,
+        TimeSpan validationPollInterval
+    ) : base(appLifetime, client, logger, domainName, validationTimeout, validationPollInterval)
     {
         _dnsChallengeProvider = dnsChallengeProvider;
     }
