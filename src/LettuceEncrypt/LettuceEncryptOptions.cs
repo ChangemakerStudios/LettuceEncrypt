@@ -127,4 +127,12 @@ public class LettuceEncryptOptions
     /// Default is true. Helps catch configuration issues early.
     /// </summary>
     public bool EnableChallengeSelfTest { get; set; } = true;
+
+    /// <summary>
+    /// Base URL for HTTP challenge self-test requests.
+    /// If not specified, the system will attempt to detect the server's HTTP binding automatically.
+    /// Examples: "http://localhost:5000", "http://localhost", "http://0.0.0.0:8080"
+    /// This is useful for containerized applications or when the server binds to non-standard addresses/ports.
+    /// </summary>
+    public string? ChallengeSelfTestBaseUrl { get; set; }
 }

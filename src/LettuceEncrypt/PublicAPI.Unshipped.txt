@@ -5,3 +5,5 @@ LettuceEncrypt.LettuceEncryptOptions.ValidationPollInterval.get -> System.TimeSp
 LettuceEncrypt.LettuceEncryptOptions.ValidationPollInterval.set -> void
 LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.get -> bool
 LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.set -> void
+LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.get -> string?
+LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.set -> void

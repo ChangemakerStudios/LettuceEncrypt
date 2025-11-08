@@ -9,6 +9,7 @@ using Certes.Acme.Resource;
 using LettuceEncrypt.Accounts;
 using LettuceEncrypt.Acme;
 using LettuceEncrypt.Internal.PfxBuilder;
+using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -28,6 +29,7 @@ internal class AcmeCertificateFactory
     private readonly IDnsChallengeProvider _dnsChallengeProvider;
     private readonly ICertificateAuthorityConfiguration _certificateAuthority;
     private readonly IPfxBuilderFactory _pfxBuilderFactory;
+    private readonly IServer _server;
     private readonly TaskCompletionSource<object?> _appStarted = new();
     private AcmeClient? _client;
     private IKey? _acmeAccountKey;
@@ -43,6 +45,7 @@ internal class AcmeCertificateFactory
         ICertificateAuthorityConfiguration certificateAuthority,
         IDnsChallengeProvider dnsChallengeProvider,
         IPfxBuilderFactory pfxBuilderFactory,
+        IServer server,
         IAccountStore? accountRepository = null)
     {
         _acmeClientFactory = acmeClientFactory;
@@ -55,6 +58,7 @@ internal class AcmeCertificateFactory
         _dnsChallengeProvider = dnsChallengeProvider;
         _certificateAuthority = certificateAuthority;
         _pfxBuilderFactory = pfxBuilderFactory;
+        _server = server;
 
         appLifetime.ApplicationStarted.Register(() => _appStarted.TrySetResult(null));
         if (appLifetime.ApplicationStarted.IsCancellationRequested)
@@ -239,6 +243,7 @@ internal class AcmeCertificateFactory
         var validationTimeout = _options.Value.ValidationTimeout;
         var validationPollInterval = _options.Value.ValidationPollInterval;
         var enableSelfTest = _options.Value.EnableChallengeSelfTest;
+        var selfTestBaseUrl = _options.Value.ChallengeSelfTestBaseUrl;
 
         if (_tlsAlpnChallengeResponder.IsEnabled)
         {
@@ -249,7 +254,7 @@ internal class AcmeCertificateFactory
         if (_options.Value.AllowedChallengeTypes.HasFlag(ChallengeType.Http01))
         {
             validators.Add(new Http01DomainValidator(
-                _challengeStore, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval, enableSelfTest));
+                _challengeStore, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval, enableSelfTest, selfTestBaseUrl, _server));
         }
 
         if (_options.Value.AllowedChallengeTypes.HasFlag(ChallengeType.Dns01))
