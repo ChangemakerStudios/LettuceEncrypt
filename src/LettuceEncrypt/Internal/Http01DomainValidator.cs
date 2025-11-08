@@ -64,22 +64,33 @@ internal class Http01DomainValidator : DomainOwnershipValidator
                 $"Did not receive challenge information for challenge type {ChallengeTypes.Http01}");
         }
 
+        var token = httpChallenge.Token;
         var keyAuth = httpChallenge.KeyAuthz;
-        _challengeStore.AddChallengeResponse(httpChallenge.Token, keyAuth);
 
-        _logger.LogTrace("Waiting for server to start accepting HTTP requests");
-        await _appStarted.Task;
-
-        // Perform self-test if enabled
-        if (_enableSelfTest)
+        try
         {
-            await SelfTestChallengeEndpointAsync(httpChallenge.Token, keyAuth, cancellationToken);
+            _challengeStore.AddChallengeResponse(token, keyAuth);
+
+            _logger.LogTrace("Waiting for server to start accepting HTTP requests");
+            await _appStarted.Task;
+
+            // Perform self-test if enabled
+            if (_enableSelfTest)
+            {
+                await SelfTestChallengeEndpointAsync(token, keyAuth, cancellationToken);
+            }
+
+            _logger.LogTrace("Requesting server to validate HTTP challenge");
+            await _client.ValidateChallengeAsync(httpChallenge);
+
+            return token;
         }
-
-        _logger.LogTrace("Requesting server to validate HTTP challenge");
-        await _client.ValidateChallengeAsync(httpChallenge);
-
-        return httpChallenge.Token;
+        catch
+        {
+            // If anything fails after adding to store, remove it before rethrowing
+            _challengeStore.RemoveChallenge(token);
+            throw;
+        }
     }
 
     private async Task SelfTestChallengeEndpointAsync(string token, string expectedResponse, CancellationToken cancellationToken)

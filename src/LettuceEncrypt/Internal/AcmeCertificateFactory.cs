@@ -294,6 +294,12 @@ internal class AcmeCertificateFactory
             }
             catch (Exception ex)
             {
+                // Rethrow cancellation exceptions immediately to preserve cooperative cancellation semantics
+                if (ex is OperationCanceledException || ex is TaskCanceledException)
+                {
+                    throw;
+                }
+
                 failures.Add(ex);
                 _logger.LogWarning(ex,
                     "Validation with {ValidatorName} failed for domain '{DomainName}'. " +

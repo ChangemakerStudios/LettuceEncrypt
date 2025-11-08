@@ -62,6 +62,12 @@ internal class BeginCertificateCreationState : AcmeState
         }
         catch (Exception ex)
         {
+            // Rethrow cancellation exceptions immediately to preserve cooperative cancellation semantics
+            if (ex is OperationCanceledException || ex is TaskCanceledException)
+            {
+                throw;
+            }
+
             // Record failure for all domains
             foreach (var domain in domainNames)
             {
