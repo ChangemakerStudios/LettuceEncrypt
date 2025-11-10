@@ -54,6 +54,7 @@ public static class LettuceEncryptServiceCollectionExtensions
             .AddSingleton<IConsole>(PhysicalConsole.Singleton)
             .AddSingleton<IClock, SystemClock>()
             .AddSingleton<TermsOfServiceChecker>()
+            .AddSingleton<RenewalFailureTracker>()
             .AddSingleton<ICertificateSource, DeveloperCertLoader>()
             .AddSingleton<AcmeCertificateFactory>()
             .AddSingleton<AcmeClientFactory>()

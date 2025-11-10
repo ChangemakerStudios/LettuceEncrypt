@@ -31,7 +31,8 @@ public class StartupCertificateLoaderTests
 
         var startupLoader = new StartupCertificateLoader(
             new[] { source1.Object, source2.Object },
-            selector.Object);
+            selector.Object,
+            NullLogger<StartupCertificateLoader>.Instance);
 
         await startupLoader.StartAsync(default);
 

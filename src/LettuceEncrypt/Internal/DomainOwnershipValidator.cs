@@ -14,12 +14,22 @@ internal abstract class DomainOwnershipValidator
     protected readonly ILogger _logger;
     protected readonly string _domainName;
     protected readonly TaskCompletionSource<object?> _appStarted = new();
+    protected readonly TimeSpan _validationTimeout;
+    protected readonly TimeSpan _validationPollInterval;
 
-    protected DomainOwnershipValidator(IHostApplicationLifetime appLifetime, AcmeClient client, ILogger logger, string domainName)
+    protected DomainOwnershipValidator(
+        IHostApplicationLifetime appLifetime,
+        AcmeClient client,
+        ILogger logger,
+        string domainName,
+        TimeSpan validationTimeout,
+        TimeSpan validationPollInterval)
     {
         _client = client;
         _logger = logger;
         _domainName = domainName;
+        _validationTimeout = validationTimeout;
+        _validationPollInterval = validationPollInterval;
 
         appLifetime.ApplicationStarted.Register(() => _appStarted.TrySetResult(null));
         if (appLifetime.ApplicationStarted.IsCancellationRequested)
@@ -32,25 +42,37 @@ internal abstract class DomainOwnershipValidator
 
     protected async Task WaitForChallengeResultAsync(IAuthorizationContext authorizationContext, CancellationToken cancellationToken)
     {
-        var retries = 60;
-        var delay = TimeSpan.FromSeconds(2);
+        var startTime = DateTimeOffset.UtcNow;
+        var attempt = 0;
 
-        while (retries > 0)
+        while (true)
         {
-            retries--;
+            attempt++;
+            var elapsed = DateTimeOffset.UtcNow - startTime;
+
+            if (elapsed >= _validationTimeout)
+            {
+                throw new TimeoutException(
+                    $"Timed out after {elapsed.TotalSeconds:F1} seconds waiting for domain ownership validation of '{_domainName}'. " +
+                    $"Made {attempt} attempts. Consider increasing ValidationTimeout in LettuceEncryptOptions.");
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
 
             var authorization = await _client.GetAuthorizationAsync(authorizationContext);
 
             _logger.LogAcmeAction("GetAuthorization");
+            _logger.LogTrace("Validation attempt {Attempt} for domain '{DomainName}': status = {Status}, elapsed = {Elapsed:F1}s",
+                attempt, _domainName, authorization.Status, elapsed.TotalSeconds);
 
             switch (authorization.Status)
             {
                 case AuthorizationStatus.Valid:
+                    _logger.LogInformation("Domain '{DomainName}' validated successfully after {Attempts} attempts in {Elapsed:F1}s",
+                        _domainName, attempt, elapsed.TotalSeconds);
                     return;
                 case AuthorizationStatus.Pending:
-                    await Task.Delay(delay, cancellationToken);
+                    await Task.Delay(_validationPollInterval, cancellationToken);
                     continue;
                 case AuthorizationStatus.Invalid:
                     throw InvalidAuthorizationError(authorization);
@@ -66,8 +88,6 @@ internal abstract class DomainOwnershipValidator
                         "Unexpected response from server while validating domain ownership.");
             }
         }
-
-        throw new TimeoutException("Timed out waiting for domain ownership validation.");
     }
 
     private Exception InvalidAuthorizationError(Authorization authorization)
