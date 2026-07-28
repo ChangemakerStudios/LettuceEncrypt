@@ -69,4 +69,61 @@ public static class FileSystemStorageExtensions
 
         return builder;
     }
+
+    /// <summary>
+    /// Store HTTP-01 challenge responses in a directory instead of in the memory of a single process.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this when the application runs more than one instance behind a load balancer and those
+    /// instances share a directory. By default challenges are held in memory, so only the instance
+    /// that began the ACME order can answer the certificate authority's validation request. When the
+    /// load balancer sends that request to any other instance, validation fails. Writing challenges
+    /// to shared storage lets every instance answer.
+    /// </para>
+    /// <para>
+    /// The directory must be genuinely shared between instances, such as a clustered volume. A
+    /// per-host volume of the same name on each machine does not work.
+    /// </para>
+    /// <para>
+    /// Set <see cref="LettuceEncryptOptions.AllowedChallengeTypes"/> to
+    /// <see cref="Acme.ChallengeType.Http01"/> when using this. Otherwise TLS-ALPN-01 is attempted
+    /// first, and it has the same single-instance limitation with no equivalent workaround.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder"></param>
+    /// <param name="directory">The root directory for storing challenges. A "challenges" subdirectory is created.</param>
+    /// <returns></returns>
+    public static ILettuceEncryptServiceBuilder PersistHttpChallengesToDirectory(
+        this ILettuceEncryptServiceBuilder builder,
+        DirectoryInfo directory)
+    {
+        if (builder is null)
+        {
+            throw new ArgumentNullException(nameof(builder));
+        }
+
+        if (directory is null)
+        {
+            throw new ArgumentNullException(nameof(directory));
+        }
+
+        // Replace rather than add. The in-memory store is registered unconditionally by
+        // AddLettuceEncrypt, and leaving both registered would depend on registration order.
+        builder.Services.Replace(
+            ServiceDescriptor.Singleton<IHttpChallengeResponseStore>(services =>
+                new FileSystemHttpChallengeStore(
+                    directory,
+                    services.GetRequiredService<ILogger<FileSystemHttpChallengeStore>>())));
+
+        // A shared directory also lets instances agree on which one places an order, so they do not
+        // each spend part of the certificate authority's duplicate-certificate allowance.
+        builder.Services.Replace(
+            ServiceDescriptor.Singleton<ICertificateOrderLock>(services =>
+                new FileSystemCertificateOrderLock(
+                    directory,
+                    services.GetRequiredService<ILogger<FileSystemCertificateOrderLock>>())));
+
+        return builder;
+    }
 }

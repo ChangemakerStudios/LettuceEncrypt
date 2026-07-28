@@ -7,3 +7,8 @@ LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.get -> bool
 LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.set -> void
 LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.get -> string?
 LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.set -> void
+LettuceEncrypt.IHttpChallengeResponseStore
+LettuceEncrypt.IHttpChallengeResponseStore.AddChallengeResponse(string! token, string! response) -> void
+LettuceEncrypt.IHttpChallengeResponseStore.TryGetResponse(string! token, out string? value) -> bool
+LettuceEncrypt.IHttpChallengeResponseStore.RemoveChallenge(string! token) -> void
+static LettuceEncrypt.FileSystemStorageExtensions.PersistHttpChallengesToDirectory(this LettuceEncrypt.ILettuceEncryptServiceBuilder! builder, System.IO.DirectoryInfo! directory) -> LettuceEncrypt.ILettuceEncryptServiceBuilder!

@@ -202,8 +202,11 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
 
     private bool IsCertificateValid(X509Certificate2 certificate, string domainName)
     {
+        // X509Certificate2.NotBefore and NotAfter are expressed in local time, so they must be
+        // converted before being compared against a UTC timestamp. Otherwise the comparison is
+        // wrong by the machine's UTC offset.
         // Check if certificate has expired
-        if (certificate.NotAfter < DateTime.UtcNow)
+        if (certificate.NotAfter.ToUniversalTime() < DateTime.UtcNow)
         {
             _logger.LogWarning(
                 "Certificate for {domainName} has expired (NotAfter: {NotAfter}). It will not be used.",
@@ -212,7 +215,7 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         }
 
         // Check if certificate is not yet valid
-        if (certificate.NotBefore > DateTime.UtcNow)
+        if (certificate.NotBefore.ToUniversalTime() > DateTime.UtcNow)
         {
             _logger.LogWarning(
                 "Certificate for {domainName} is not yet valid (NotBefore: {NotBefore}). It will not be used.",

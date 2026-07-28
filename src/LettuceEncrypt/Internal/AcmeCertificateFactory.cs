@@ -259,8 +259,21 @@ internal class AcmeCertificateFactory
 
         if (_options.Value.AllowedChallengeTypes.HasFlag(ChallengeType.Dns01))
         {
-            validators.Add(new Dns01DomainValidator(
-                _dnsChallengeProvider, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval));
+            // The no-op provider reports success without publishing a TXT record, so validation
+            // would wait for the full timeout and then fail. Skipping it keeps the failure fast
+            // and the reason obvious.
+            if (_dnsChallengeProvider is NoOpDnsChallengeProvider)
+            {
+                _logger.LogDebug(
+                    "Skipping Dns01 validation for '{DomainName}'. No {ProviderType} is configured, " +
+                    "so no TXT record can be published.",
+                    domainName, nameof(IDnsChallengeProvider));
+            }
+            else
+            {
+                validators.Add(new Dns01DomainValidator(
+                    _dnsChallengeProvider, _appLifetime, _client, _logger, domainName, validationTimeout, validationPollInterval));
+            }
         }
 
         if (validators.Count == 0)
@@ -278,11 +291,14 @@ internal class AcmeCertificateFactory
             string.Join(", ", validators.Select(v => v.GetType().Name.Replace("DomainValidator", ""))));
 
         var failures = new List<Exception>();
+        var attempted = new List<string>();
+        var authorizationInvalidated = false;
 
         foreach (var validator in validators)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var validatorName = validator.GetType().Name.Replace("DomainValidator", "");
+            attempted.Add(validatorName);
 
             try
             {
@@ -307,31 +323,74 @@ internal class AcmeCertificateFactory
 
                 failures.Add(ex);
                 _logger.LogWarning(ex,
-                    "Validation with {ValidatorName} failed for domain '{DomainName}'. " +
-                    "Error: {ErrorMessage}. " +
-                    "{RemainingValidators} validation method(s) remaining.",
+                    "Validation with {ValidatorName} failed for domain '{DomainName}'. Error: {ErrorMessage}",
                     validatorName,
                     domainName,
-                    ex.Message,
-                    validators.Count - failures.Count);
+                    ex.Message);
+            }
+
+            // A failed challenge moves the whole authorization to 'invalid' (RFC 8555 section 7.1.6).
+            // No other challenge type can succeed against it, so the remaining validators would only
+            // produce misleading errors about missing challenge information.
+            authorizationInvalidated = await IsAuthorizationInvalidAsync(authorizationContext);
+
+            if (authorizationInvalidated)
+            {
+                var remaining = validators.Count - attempted.Count;
+
+                if (remaining > 0)
+                {
+                    _logger.LogError(
+                        "The authorization for '{DomainName}' was invalidated by the failed {ValidatorName} challenge, " +
+                        "so the remaining {RemainingValidators} challenge method(s) cannot be attempted against it. " +
+                        "A certificate authority marks the entire authorization invalid once any challenge fails, " +
+                        "so challenge types are not interchangeable fallbacks. Set AllowedChallengeTypes to the one " +
+                        "challenge type this deployment can actually serve.",
+                        domainName, validatorName, remaining);
+                }
+
+                break;
             }
         }
 
-        // All validators failed
-        var failureDetails = string.Join("; ", failures.Select((ex, i) =>
-            $"{validators[i].GetType().Name.Replace("DomainValidator", "")}: {ex.Message}"));
+        var failureDetails = string.Join("; ", failures.Select((ex, i) => $"{attempted[i]}: {ex.Message}"));
 
         _logger.LogError(
-            "All {ValidatorCount} validation methods failed for domain '{DomainName}'. Failures: {FailureDetails}",
-            validators.Count,
+            "Domain validation failed for '{DomainName}' after attempting {AttemptedCount} of {ValidatorCount} " +
+            "challenge method(s). Failures: {FailureDetails}",
             domainName,
+            attempted.Count,
+            validators.Count,
             failureDetails);
 
-        throw new AggregateException(
-            $"Failed to validate ownership of domainName '{domainName}' using any available challenge method. " +
-            $"Attempted: {string.Join(", ", validators.Select(v => v.GetType().Name.Replace("DomainValidator", "")))}. " +
-            $"See inner exceptions for details.",
-            failures);
+        var summary = authorizationInvalidated
+            ? $"Failed to validate ownership of domainName '{domainName}'. The authorization was invalidated by the " +
+              $"failed {attempted[attempted.Count - 1]} challenge, so no further challenge type could be attempted. " +
+              $"Attempted: {string.Join(", ", attempted)}. See inner exceptions for details."
+            : $"Failed to validate ownership of domainName '{domainName}' using any available challenge method. " +
+              $"Attempted: {string.Join(", ", attempted)}. See inner exceptions for details.";
+
+        throw new AggregateException(summary, failures);
+    }
+
+    /// <summary>
+    /// Checks whether the certificate authority has moved the authorization to a terminal invalid
+    /// state, which makes every remaining challenge type unusable.
+    /// </summary>
+    private async Task<bool> IsAuthorizationInvalidAsync(IAuthorizationContext authorizationContext)
+    {
+        try
+        {
+            var authorization = await _client!.GetAuthorizationAsync(authorizationContext);
+            return authorization.Status == AuthorizationStatus.Invalid;
+        }
+        catch (Exception ex)
+        {
+            // If the status cannot be read, fall through to the next validator rather than giving
+            // up on a certificate that might still be obtainable.
+            _logger.LogDebug(ex, "Could not read authorization status after a failed challenge");
+            return false;
+        }
     }
 
     private async Task<X509Certificate2> CompleteCertificateRequestAsync(IOrderContext order,

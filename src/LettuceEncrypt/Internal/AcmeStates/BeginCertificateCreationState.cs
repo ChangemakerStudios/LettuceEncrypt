@@ -15,6 +15,7 @@ internal class BeginCertificateCreationState : AcmeState
     private readonly CertificateSelector _selector;
     private readonly IEnumerable<ICertificateRepository> _certificateRepositories;
     private readonly RenewalFailureTracker _failureTracker;
+    private readonly ICertificateOrderLock _orderLock;
 
     public BeginCertificateCreationState(
         AcmeStateMachineContext context,
@@ -23,7 +24,8 @@ internal class BeginCertificateCreationState : AcmeState
         AcmeCertificateFactory acmeCertificateFactory,
         CertificateSelector selector,
         IEnumerable<ICertificateRepository> certificateRepositories,
-        RenewalFailureTracker failureTracker)
+        RenewalFailureTracker failureTracker,
+        ICertificateOrderLock orderLock)
         : base(context)
     {
         _logger = logger;
@@ -32,11 +34,23 @@ internal class BeginCertificateCreationState : AcmeState
         _selector = selector;
         _certificateRepositories = certificateRepositories;
         _failureTracker = failureTracker;
+        _orderLock = orderLock;
     }
 
     public override async Task<IAcmeState> MoveNextAsync(CancellationToken cancellationToken)
     {
         var domainNames = _options.Value.DomainNames;
+
+        // When several instances share storage they all reach this state at once. Ordering from
+        // each of them wastes the certificate authority's duplicate-certificate allowance, so only
+        // one instance orders. The rest pick the certificate up from the shared repository on their
+        // next renewal check.
+        using var orderLock = _orderLock.TryAcquire();
+
+        if (orderLock == null)
+        {
+            return MoveTo<CheckForRenewalState>();
+        }
 
         try
         {

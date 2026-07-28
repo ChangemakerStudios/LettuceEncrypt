@@ -87,7 +87,14 @@ internal class StartupCertificateLoader(
     {
         try
         {
-            var now = DateTimeOffset.UtcNow.DateTime;
+            var now = DateTime.UtcNow;
+
+            // X509Certificate2.NotBefore and NotAfter are expressed in local time. They must be
+            // converted before being compared against a UTC timestamp, or the comparison is wrong
+            // by the machine's UTC offset: certificates appear to expire early west of UTC, and
+            // freshly issued certificates appear to be not yet valid east of it.
+            var notBefore = cert.NotBefore.ToUniversalTime();
+            var notAfter = cert.NotAfter.ToUniversalTime();
 
             // Check if certificate has a private key
             if (!cert.HasPrivateKey)
@@ -100,7 +107,7 @@ internal class StartupCertificateLoader(
             }
 
             // Check if certificate is expired
-            if (cert.NotAfter <= now)
+            if (notAfter <= now)
             {
                 logger.LogWarning(
                     "Certificate '{Subject}' (thumbprint: {Thumbprint}) expired on {ExpiryDate}. Skipping.",
@@ -111,7 +118,7 @@ internal class StartupCertificateLoader(
             }
 
             // Check if certificate is not yet valid
-            if (cert.NotBefore > now)
+            if (notBefore > now)
             {
                 logger.LogWarning(
                     "Certificate '{Subject}' (thumbprint: {Thumbprint}) is not yet valid (starts: {StartDate}). Skipping.",
@@ -122,7 +129,7 @@ internal class StartupCertificateLoader(
             }
 
             // Warn if certificate expires soon (within 30 days)
-            var daysUntilExpiry = (cert.NotAfter - now).TotalDays;
+            var daysUntilExpiry = (notAfter - now).TotalDays;
             if (daysUntilExpiry <= 30)
             {
                 logger.LogWarning(
