@@ -28,7 +28,9 @@ internal class HttpChallengeResponseMiddleware : IMiddleware
             token = token.Substring(1);
         }
 
-        if (!_responseStore.TryGetResponse(token, out var value))
+        var value = await _responseStore.GetResponseAsync(token, context.RequestAborted);
+
+        if (value is null)
         {
             await next(context);
             return;
@@ -36,8 +38,8 @@ internal class HttpChallengeResponseMiddleware : IMiddleware
 
         _logger.LogDebug("Confirmed challenge request for {token}", token);
 
-        context.Response.ContentLength = value?.Length ?? 0;
+        context.Response.ContentLength = value.Length;
         context.Response.ContentType = "application/octet-stream";
-        await context.Response.WriteAsync(value!, context.RequestAborted);
+        await context.Response.WriteAsync(value, context.RequestAborted);
     }
 }

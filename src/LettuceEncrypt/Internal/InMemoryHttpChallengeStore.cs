@@ -1,4 +1,4 @@
-﻿// Copyright (c) Nate McMaster.
+// Copyright (c) Nate McMaster.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System.Collections.Concurrent;
@@ -27,7 +27,7 @@ internal class InMemoryHttpChallengeResponseStore : IHttpChallengeResponseStore,
         _cleanupTimer = new Timer(CleanupExpiredChallenges, null, TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(15));
     }
 
-    public void AddChallengeResponse(string token, string response)
+    public Task AddChallengeResponseAsync(string token, string response, CancellationToken cancellationToken = default)
     {
         var entry = new ChallengeEntry
         {
@@ -38,28 +38,30 @@ internal class InMemoryHttpChallengeResponseStore : IHttpChallengeResponseStore,
         _values.AddOrUpdate(token, entry, (_, _) => entry);
         _logger.LogDebug("Added HTTP challenge response for token {Token} (first 10 chars: {TokenPrefix}...)",
             token, token.Length > 10 ? token.Substring(0, 10) : token);
+
+        return Task.CompletedTask;
     }
 
-    public bool TryGetResponse(string token, out string? value)
+    public Task<string?> GetResponseAsync(string token, CancellationToken cancellationToken = default)
     {
         if (_values.TryGetValue(token, out var entry))
         {
-            value = entry.Response;
             _logger.LogTrace("Retrieved HTTP challenge response for token {Token}", token);
-            return true;
+            return Task.FromResult<string?>(entry.Response);
         }
 
-        value = null;
         _logger.LogTrace("No HTTP challenge response found for token {Token}", token);
-        return false;
+        return Task.FromResult<string?>(null);
     }
 
-    public void RemoveChallenge(string token)
+    public Task RemoveChallengeAsync(string token, CancellationToken cancellationToken = default)
     {
         if (_values.TryRemove(token, out _))
         {
             _logger.LogDebug("Removed HTTP challenge response for token {Token}", token);
         }
+
+        return Task.CompletedTask;
     }
 
     private void CleanupExpiredChallenges(object? state)

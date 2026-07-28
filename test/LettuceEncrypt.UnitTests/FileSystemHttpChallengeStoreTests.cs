@@ -25,54 +25,51 @@ public class FileSystemHttpChallengeStoreTests : IDisposable
         => new(directory, NullLogger<FileSystemHttpChallengeStore>.Instance);
 
     [Fact]
-    public void ItRoundTripsAChallengeResponse()
+    public async Task ItRoundTripsAChallengeResponse()
     {
         var store = CreateStore();
 
-        store.AddChallengeResponse("token-abc", "key-authorization-value");
+        await store.AddChallengeResponseAsync("token-abc", "key-authorization-value");
 
-        Assert.True(store.TryGetResponse("token-abc", out var value));
-        Assert.Equal("key-authorization-value", value);
+        Assert.Equal("key-authorization-value", await store.GetResponseAsync("token-abc"));
     }
 
     [Fact]
-    public void ItReturnsFalseForUnknownToken()
+    public async Task ItReturnsNullForUnknownToken()
     {
         var store = CreateStore();
 
-        Assert.False(store.TryGetResponse("never-added", out var value));
-        Assert.Null(value);
+        Assert.Null(await store.GetResponseAsync("never-added"));
     }
 
     [Fact]
-    public void ItRemovesAChallenge()
+    public async Task ItRemovesAChallenge()
     {
         var store = CreateStore();
-        store.AddChallengeResponse("token-abc", "value");
+        await store.AddChallengeResponseAsync("token-abc", "value");
 
-        store.RemoveChallenge("token-abc");
+        await store.RemoveChallengeAsync("token-abc");
 
-        Assert.False(store.TryGetResponse("token-abc", out _));
+        Assert.Null(await store.GetResponseAsync("token-abc"));
     }
 
     [Fact]
-    public void RemovingAnUnknownChallengeDoesNotThrow()
+    public async Task RemovingAnUnknownChallengeDoesNotThrow()
     {
         var store = CreateStore();
 
-        store.RemoveChallenge("never-added");
+        await store.RemoveChallengeAsync("never-added");
     }
 
     [Fact]
-    public void ItOverwritesAnExistingToken()
+    public async Task ItOverwritesAnExistingToken()
     {
         var store = CreateStore();
 
-        store.AddChallengeResponse("token-abc", "first");
-        store.AddChallengeResponse("token-abc", "second");
+        await store.AddChallengeResponseAsync("token-abc", "first");
+        await store.AddChallengeResponseAsync("token-abc", "second");
 
-        Assert.True(store.TryGetResponse("token-abc", out var value));
-        Assert.Equal("second", value);
+        Assert.Equal("second", await store.GetResponseAsync("token-abc"));
     }
 
     /// <summary>
@@ -80,15 +77,14 @@ public class FileSystemHttpChallengeStoreTests : IDisposable
     /// a volume. This is the whole point of the file-backed store.
     /// </summary>
     [Fact]
-    public void AnotherInstanceSharingTheDirectoryCanAnswerTheChallenge()
+    public async Task AnotherInstanceSharingTheDirectoryCanAnswerTheChallenge()
     {
         var writer = CreateStore();
         var reader = CreateStore(new DirectoryInfo(_testDir.FullName));
 
-        writer.AddChallengeResponse("token-abc", "key-authorization-value");
+        await writer.AddChallengeResponseAsync("token-abc", "key-authorization-value");
 
-        Assert.True(reader.TryGetResponse("token-abc", out var value));
-        Assert.Equal("key-authorization-value", value);
+        Assert.Equal("key-authorization-value", await reader.GetResponseAsync("token-abc"));
     }
 
     [Theory]
@@ -100,49 +96,48 @@ public class FileSystemHttpChallengeStoreTests : IDisposable
     [InlineData("has space")]
     [InlineData("has.dot")]
     [InlineData("")]
-    public void ItRejectsTokensThatAreNotBase64Url(string token)
+    public async Task ItRejectsTokensThatAreNotBase64Url(string token)
     {
         var store = CreateStore();
 
-        Assert.False(store.TryGetResponse(token, out var value));
-        Assert.Null(value);
+        Assert.Null(await store.GetResponseAsync(token));
     }
 
     [Fact]
-    public void ItDoesNotReadFilesOutsideTheChallengeDirectory()
-    {
-        var secretPath = Path.Combine(_testDir.FullName, "secret.txt");
-        File.WriteAllText(secretPath, "sensitive");
-
-        var store = CreateStore();
-
-        Assert.False(store.TryGetResponse("../secret.txt", out var value));
-        Assert.Null(value);
-        Assert.True(File.Exists(secretPath));
-    }
-
-    [Fact]
-    public void ItRejectsAddingAMalformedToken()
-    {
-        var store = CreateStore();
-
-        Assert.Throws<ArgumentException>(() => store.AddChallengeResponse("../escape", "value"));
-    }
-
-    [Fact]
-    public void ItDoesNotDeleteFilesOutsideTheChallengeDirectory()
+    public async Task ItDoesNotReadFilesOutsideTheChallengeDirectory()
     {
         var secretPath = Path.Combine(_testDir.FullName, "secret.txt");
         File.WriteAllText(secretPath, "sensitive");
 
         var store = CreateStore();
-        store.RemoveChallenge("../secret.txt");
+
+        Assert.Null(await store.GetResponseAsync("../secret.txt"));
+        Assert.True(File.Exists(secretPath));
+    }
+
+    [Fact]
+    public async Task ItRejectsAddingAMalformedToken()
+    {
+        var store = CreateStore();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.AddChallengeResponseAsync("../escape", "value"));
+    }
+
+    [Fact]
+    public async Task ItDoesNotDeleteFilesOutsideTheChallengeDirectory()
+    {
+        var secretPath = Path.Combine(_testDir.FullName, "secret.txt");
+        File.WriteAllText(secretPath, "sensitive");
+
+        var store = CreateStore();
+        await store.RemoveChallengeAsync("../secret.txt");
 
         Assert.True(File.Exists(secretPath));
     }
 
     [Fact]
-    public void ItAcceptsARealisticAcmeToken()
+    public async Task ItAcceptsARealisticAcmeToken()
     {
         var store = CreateStore();
 
@@ -150,17 +145,16 @@ public class FileSystemHttpChallengeStoreTests : IDisposable
         const string Token = "evaGxfADs6pSRb2LAv9IZf17Dt3juxGJ-PCt92wr-oA";
         const string KeyAuth = "evaGxfADs6pSRb2LAv9IZf17Dt3juxGJ-PCt92wr-oA.nP1qzpXGymHBrUEepNY9HCsQk7K8KhOypzEt62jcerQ";
 
-        store.AddChallengeResponse(Token, KeyAuth);
+        await store.AddChallengeResponseAsync(Token, KeyAuth);
 
-        Assert.True(store.TryGetResponse(Token, out var value));
-        Assert.Equal(KeyAuth, value);
+        Assert.Equal(KeyAuth, await store.GetResponseAsync(Token));
     }
 
     [Fact]
-    public void ItWritesWithoutAByteOrderMark()
+    public async Task ItWritesWithoutAByteOrderMark()
     {
         var store = CreateStore();
-        store.AddChallengeResponse("token-abc", "value");
+        await store.AddChallengeResponseAsync("token-abc", "value");
 
         var file = Path.Combine(_testDir.FullName, "challenges", "token-abc");
         var bytes = File.ReadAllBytes(file);
@@ -171,10 +165,10 @@ public class FileSystemHttpChallengeStoreTests : IDisposable
     }
 
     [Fact]
-    public void ItLeavesNoTemporaryFilesBehind()
+    public async Task ItLeavesNoTemporaryFilesBehind()
     {
         var store = CreateStore();
-        store.AddChallengeResponse("token-abc", "value");
+        await store.AddChallengeResponseAsync("token-abc", "value");
 
         var challengeDir = new DirectoryInfo(Path.Combine(_testDir.FullName, "challenges"));
 

@@ -30,7 +30,7 @@ public class HttpChallengeResponseMiddlewareTests
 
         var challengeStore = services.GetRequiredService<IHttpChallengeResponseStore>();
         const string TokenValue = "abcxyz123";
-        challengeStore.AddChallengeResponse("TOKEN-1", TokenValue);
+        await challengeStore.AddChallengeResponseAsync("TOKEN-1", TokenValue);
 
         using var scope = services.CreateScope();
         var context = new DefaultHttpContext
@@ -68,8 +68,8 @@ public class HttpChallengeResponseMiddlewareTests
 
         var mockChallenge = new Mock<IHttpChallengeResponseStore>();
         mockChallenge
-            .Setup(s => s.TryGetResponse("unknown", out It.Ref<string>.IsAny))
-            .Returns(false)
+            .Setup(s => s.GetResponseAsync("unknown", It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult((string)null))
             .Verifiable();
 
         servicesCollection.Replace(ServiceDescriptor.Singleton(mockChallenge.Object));

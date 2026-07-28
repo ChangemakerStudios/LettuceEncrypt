@@ -12,10 +12,6 @@ namespace LettuceEncrypt.Internal;
 /// </summary>
 internal class FileSystemHttpChallengeStore : IHttpChallengeResponseStore
 {
-    // Challenge tokens are base64url values per RFC 8555 section 8.3. Anything else is either a
-    // probe or an attempt at path traversal, and must never reach the file system.
-    private const int MaxTokenLength = 256;
-
     private static readonly TimeSpan s_challengeTtl = TimeSpan.FromHours(1);
     private static readonly UTF8Encoding s_utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
@@ -33,9 +29,9 @@ internal class FileSystemHttpChallengeStore : IHttpChallengeResponseStore
         _challengeDir = directory.CreateSubdirectory("challenges");
     }
 
-    public void AddChallengeResponse(string token, string response)
+    public Task AddChallengeResponseAsync(string token, string response, CancellationToken cancellationToken = default)
     {
-        if (!IsValidToken(token))
+        if (!AcmeChallengeToken.IsValid(token))
         {
             throw new ArgumentException("Challenge token contains characters that are not valid base64url.", nameof(token));
         }
@@ -60,18 +56,18 @@ internal class FileSystemHttpChallengeStore : IHttpChallengeResponseStore
         _logger.LogDebug("Wrote HTTP challenge response for token {Token} to shared storage", token);
 
         RemoveExpiredChallenges();
+
+        return Task.CompletedTask;
     }
 
-    public bool TryGetResponse(string token, out string? value)
+    public Task<string?> GetResponseAsync(string token, CancellationToken cancellationToken = default)
     {
-        value = null;
-
         // The token arrives from the request path, so it is untrusted. Reject anything that is not
         // a plain base64url value before it is used to build a file path.
-        if (!IsValidToken(token))
+        if (!AcmeChallengeToken.IsValid(token))
         {
             _logger.LogTrace("Ignoring HTTP challenge request for malformed token");
-            return false;
+            return Task.FromResult<string?>(null);
         }
 
         try
@@ -81,38 +77,40 @@ internal class FileSystemHttpChallengeStore : IHttpChallengeResponseStore
             if (!File.Exists(path))
             {
                 _logger.LogTrace("No HTTP challenge response found for token {Token}", token);
-                return false;
+                return Task.FromResult<string?>(null);
             }
 
-            value = File.ReadAllText(path, s_utf8NoBom);
+            var value = File.ReadAllText(path, s_utf8NoBom);
             _logger.LogTrace("Retrieved HTTP challenge response for token {Token} from shared storage", token);
-            return true;
+            return Task.FromResult<string?>(value);
         }
         catch (IOException ex)
         {
             // A read failure must not fail the request. Report the challenge as unknown and let the
             // certificate authority retry.
             _logger.LogWarning(ex, "Could not read HTTP challenge response for token {Token}", token);
-            return false;
+            return Task.FromResult<string?>(null);
         }
         catch (UnauthorizedAccessException ex)
         {
             _logger.LogWarning(ex, "Access denied reading HTTP challenge response for token {Token}", token);
-            return false;
+            return Task.FromResult<string?>(null);
         }
     }
 
-    public void RemoveChallenge(string token)
+    public Task RemoveChallengeAsync(string token, CancellationToken cancellationToken = default)
     {
-        if (!IsValidToken(token))
+        if (!AcmeChallengeToken.IsValid(token))
         {
-            return;
+            return Task.CompletedTask;
         }
 
         if (TryDelete(GetChallengePath(token)))
         {
             _logger.LogDebug("Removed HTTP challenge response for token {Token} from shared storage", token);
         }
+
+        return Task.CompletedTask;
     }
 
     private string GetChallengePath(string token) => Path.Combine(_challengeDir.FullName, token);
@@ -124,7 +122,7 @@ internal class FileSystemHttpChallengeStore : IHttpChallengeResponseStore
     {
         try
         {
-            var cutoff = DateTimeOffset.UtcNow - s_challengeTtl;
+            var cutoff = DateTime.UtcNow - s_challengeTtl;
             var expired = _challengeDir
                 .GetFiles()
                 .Where(f => f.LastWriteTimeUtc < cutoff)
@@ -173,29 +171,5 @@ internal class FileSystemHttpChallengeStore : IHttpChallengeResponseStore
         {
             return false;
         }
-    }
-
-    private static bool IsValidToken(string? token)
-    {
-        if (string.IsNullOrEmpty(token) || token!.Length > MaxTokenLength)
-        {
-            return false;
-        }
-
-        foreach (var c in token)
-        {
-            var isBase64Url = c is (>= 'a' and <= 'z')
-                or (>= 'A' and <= 'Z')
-                or (>= '0' and <= '9')
-                or '-'
-                or '_';
-
-            if (!isBase64Url)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 }

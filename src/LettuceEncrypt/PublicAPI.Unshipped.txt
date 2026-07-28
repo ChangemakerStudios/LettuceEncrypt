@@ -8,7 +8,7 @@ LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.set -> void
 LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.get -> string?
 LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.set -> void
 LettuceEncrypt.IHttpChallengeResponseStore
-LettuceEncrypt.IHttpChallengeResponseStore.AddChallengeResponse(string! token, string! response) -> void
-LettuceEncrypt.IHttpChallengeResponseStore.TryGetResponse(string! token, out string? value) -> bool
-LettuceEncrypt.IHttpChallengeResponseStore.RemoveChallenge(string! token) -> void
+LettuceEncrypt.IHttpChallengeResponseStore.AddChallengeResponseAsync(string! token, string! response, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+LettuceEncrypt.IHttpChallengeResponseStore.GetResponseAsync(string! token, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string?>!
+LettuceEncrypt.IHttpChallengeResponseStore.RemoveChallengeAsync(string! token, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 static LettuceEncrypt.FileSystemStorageExtensions.PersistHttpChallengesToDirectory(this LettuceEncrypt.ILettuceEncryptServiceBuilder! builder, System.IO.DirectoryInfo! directory) -> LettuceEncrypt.ILettuceEncryptServiceBuilder!

@@ -47,10 +47,12 @@ internal class Http01DomainValidator : DomainOwnershipValidator
         }
         finally
         {
-            // Always cleanup challenge response, even if validation fails
+            // Always cleanup challenge response, even if validation fails. Cleanup deliberately
+            // does not observe the caller's token: on cancellation it would abort before removing
+            // the challenge, leaving it behind in shared storage.
             if (challengeToken != null)
             {
-                _challengeStore.RemoveChallenge(challengeToken);
+                await _challengeStore.RemoveChallengeAsync(challengeToken, CancellationToken.None);
             }
         }
     }
@@ -77,7 +79,7 @@ internal class Http01DomainValidator : DomainOwnershipValidator
 
         try
         {
-            _challengeStore.AddChallengeResponse(token, keyAuth);
+            await _challengeStore.AddChallengeResponseAsync(token, keyAuth, cancellationToken);
 
             _logger.LogTrace("Waiting for server to start accepting HTTP requests");
             await _appStarted.Task;
@@ -96,7 +98,7 @@ internal class Http01DomainValidator : DomainOwnershipValidator
         catch
         {
             // If anything fails after adding to store, remove it before rethrowing
-            _challengeStore.RemoveChallenge(token);
+            await _challengeStore.RemoveChallengeAsync(token, CancellationToken.None);
             throw;
         }
     }
