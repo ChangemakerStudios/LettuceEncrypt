@@ -1,6 +1,10 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$ApiKey
+    [string]$ApiKey,
+
+    # Push packages built without GitVersion. These carry the "-local" suffix from
+    # Directory.Build.props and are not real versions, so pushing them is almost always a mistake.
+    [switch]$AllowLocalVersions
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +21,20 @@ $packages = Get-ChildItem -Path $artifactsDir -Filter "*.nupkg" -Recurse
 if ($packages.Count -eq 0) {
     Write-Warning "No NuGet packages found in $artifactsDir"
     exit 0
+}
+
+$localPackages = $packages | Where-Object { $_.Name -match '-local(\.\d+)?\.nupkg$' }
+
+if ($localPackages -and -not $AllowLocalVersions) {
+    Write-Host "Refusing to push packages built without GitVersion:" -ForegroundColor Red
+    $localPackages | ForEach-Object { Write-Host "  - $($_.Name)" -ForegroundColor Red }
+    Write-Host ""
+    Write-Host "Install GitVersion and rebuild so packages get a real version:" -ForegroundColor Yellow
+    Write-Host "  dotnet tool install --global GitVersion.Tool" -ForegroundColor Yellow
+    Write-Host "  ./build.ps1 -ci" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Pass -AllowLocalVersions to push them anyway." -ForegroundColor Yellow
+    exit 1
 }
 
 Write-Host "Found $($packages.Count) package(s) to push:" -ForegroundColor Green

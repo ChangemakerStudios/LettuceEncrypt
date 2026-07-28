@@ -1,14 +1,21 @@
-name: Build and Push to NuGet
+name: Package
+
+# Computes the version with GitVersion, builds, tests and packs. Packages are attached to the run
+# as artifacts.
+#
+# This does not publish. The feed these packages go to, proget.captiveaire.com, resolves to a
+# private address and is not reachable from GitHub-hosted runners. Publishing happens from a machine
+# on the network:
+#
+#   ./build.ps1 -ci
+#   ./push.ps1 -ApiKey <key>
+#
+# To publish from CI instead, either add a self-hosted runner with network access and re-add a push
+# step, or point at a feed that is reachable from GitHub. Note that the LettuceEncrypt,
+# LettuceEncrypt.Azure and McMaster.AspNetCore.Kestrel.Certificates package IDs on nuget.org belong
+# to the original author, so publishing this fork there needs ownership of those IDs or a rename.
 
 on: [push, pull_request]
-
-env:
-  # The feed packages are published to. Switching feeds is a change to this value and the
-  # NUGET_API_KEY secret. Note that the LettuceEncrypt, LettuceEncrypt.Azure and
-  # McMaster.AspNetCore.Kestrel.Certificates package IDs on nuget.org belong to the original
-  # author, so publishing this fork there needs either ownership of those IDs or a rename.
-  NUGET_FEED: https://proget.captiveaire.com/nuget/CaptiveAire
-  RELEASE_BRANCH: main
 
 jobs:
   build:
@@ -77,11 +84,3 @@ jobs:
           name: packages-${{ steps.gitversion.outputs.FullSemVer }}
           path: artifacts/*
           if-no-files-found: error
-
-      - name: Publish
-        if: github.event_name != 'pull_request' && github.ref_name == 'main'
-        run: >
-          dotnet nuget push "artifacts/*.nupkg"
-          --source ${{ env.NUGET_FEED }}
-          --api-key ${{ secrets.NUGET_API_KEY }}
-          --skip-duplicate
