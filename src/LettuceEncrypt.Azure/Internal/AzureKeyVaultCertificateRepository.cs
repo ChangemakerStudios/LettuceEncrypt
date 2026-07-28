@@ -13,6 +13,7 @@ namespace LettuceEncrypt.Azure.Internal;
 internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICertificateSource
 {
     private readonly IOptions<LettuceEncryptOptions> _encryptOptions;
+    private readonly IOptions<AzureKeyVaultLettuceEncryptOptions> _keyVaultOptions;
     private readonly ILogger<AzureKeyVaultCertificateRepository> _logger;
     private readonly ICertificateClientFactory _certificateClientFactory;
     private readonly ISecretClientFactory _secretClientFactory;
@@ -21,12 +22,14 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
         ICertificateClientFactory certificateClientFactory,
         ISecretClientFactory secretClientFactory,
         IOptions<LettuceEncryptOptions> encryptOptions,
+        IOptions<AzureKeyVaultLettuceEncryptOptions> keyVaultOptions,
         ILogger<AzureKeyVaultCertificateRepository> logger)
     {
         _certificateClientFactory = certificateClientFactory ??
                                     throw new ArgumentNullException(nameof(_certificateClientFactory));
         _secretClientFactory = secretClientFactory ?? throw new ArgumentNullException(nameof(secretClientFactory));
         _encryptOptions = encryptOptions ?? throw new ArgumentNullException(nameof(encryptOptions));
+        _keyVaultOptions = keyVaultOptions ?? throw new ArgumentNullException(nameof(keyVaultOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -167,11 +170,21 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
             Enabled = true
         };
 
+        var certificateName = NormalizeHostName(domainName);
+
         try
         {
             var certificateClient = _certificateClientFactory.Create();
 
-            await certificateClient.ImportCertificateAsync(options, cancellationToken);
+            try
+            {
+                await certificateClient.ImportCertificateAsync(options, cancellationToken);
+            }
+            catch (RequestFailedException ex) when (IsDeletedButRecoverable(ex))
+            {
+                await RecoverAndRetryImportAsync(
+                    certificateClient, certificateName, domainName, options, cancellationToken);
+            }
 
             _logger.LogInformation("Successfully imported certificate into Azure KeyVault for {domainName}", domainName);
         }
@@ -185,6 +198,47 @@ internal class AzureKeyVaultCertificateRepository : ICertificateRepository, ICer
             _logger.LogError(ex, "Unexpected error saving certificate for {domainName} to Azure KeyVault", domainName);
             throw;
         }
+    }
+
+    /// <summary>
+    /// A soft-deleted certificate keeps its name reserved, and a read of it returns 404 rather than
+    /// anything that reveals the deleted state. The conflict on import is the first sign of it.
+    /// </summary>
+    private static bool IsDeletedButRecoverable(RequestFailedException ex)
+        => ex.Status == 409
+           && ex.Message.Contains("ObjectIsDeletedButRecoverable", StringComparison.OrdinalIgnoreCase);
+
+    private async Task RecoverAndRetryImportAsync(
+        CertificateClient certificateClient,
+        string certificateName,
+        string domainName,
+        ImportCertificateOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (!_keyVaultOptions.Value.RecoverDeletedCertificates)
+        {
+            throw new InvalidOperationException(
+                $"The certificate '{certificateName}' is soft-deleted in Azure KeyVault, which reserves " +
+                $"its name and prevents a new certificate for {domainName} from being saved. The certificate " +
+                $"was issued successfully but cannot be persisted, so it will be lost when this process stops. " +
+                $"Recover it with 'az keyvault certificate recover --vault-name <vault> --name {certificateName}', " +
+                $"or set RecoverDeletedCertificates to true in AzureKeyVaultLettuceEncryptOptions to have this " +
+                $"happen automatically. Purging is the alternative, but it is irreversible and is refused " +
+                $"outright on a vault with purge protection enabled.");
+        }
+
+        _logger.LogWarning(
+            "The certificate '{CertificateName}' is soft-deleted in Azure KeyVault, which reserves its name. " +
+            "Recovering it so the certificate for {domainName} can be saved.",
+            certificateName, domainName);
+
+        var operation = await certificateClient.StartRecoverDeletedCertificateAsync(certificateName, cancellationToken);
+        await operation.WaitForCompletionAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Recovered the soft-deleted certificate '{CertificateName}'. Retrying the import.", certificateName);
+
+        await certificateClient.ImportCertificateAsync(options, cancellationToken);
     }
 
     private async ValueTask<bool> ShouldImportVersionAsync(string domainName, X509Certificate2 certificate,

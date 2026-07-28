@@ -1,6 +1,7 @@
-﻿// Copyright (c) Nate McMaster.
+// Copyright (c) Nate McMaster.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+using Azure;
 using Azure.Security.KeyVault.Certificates;
 using Azure.Security.KeyVault.Secrets;
 using LettuceEncrypt.Azure.Internal;
@@ -77,6 +78,7 @@ public class AzureKeyVaultTests
             certClientFactory.Object,
             Mock.Of<ISecretClientFactory>(),
             options,
+            Options.Create(new AzureKeyVaultLettuceEncryptOptions()),
             NullLogger<AzureKeyVaultCertificateRepository>.Instance);
         foreach (var domain in options.Value.DomainNames)
         {
@@ -106,6 +108,7 @@ public class AzureKeyVaultTests
         var repository = new AzureKeyVaultCertificateRepository(
             Mock.Of<ICertificateClientFactory>(),
             secretClientFactory.Object, options,
+            Options.Create(new AzureKeyVaultLettuceEncryptOptions()),
             NullLogger<AzureKeyVaultCertificateRepository>.Instance);
 
         var certificates = await repository.GetCertificatesAsync(CancellationToken.None);
@@ -116,5 +119,113 @@ public class AzureKeyVaultTests
             null, CancellationToken.None));
         secretClient.Verify(t => t.GetSecretAsync(AzureKeyVaultCertificateRepository.NormalizeHostName(Domain2),
             null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ASoftDeletedCertificateExplainsHowToRecoverIt()
+    {
+        var (certClient, certClientFactory) = CreateMockCertClient();
+        var options = Options.Create(new LettuceEncryptOptions());
+
+        certClient
+            .Setup(c => c.ImportCertificateAsync(It.IsAny<ImportCertificateOptions>(), It.IsAny<CancellationToken>()))
+            .Throws(SoftDeleteConflict());
+
+        var repository = new AzureKeyVaultCertificateRepository(
+            certClientFactory,
+            Mock.Of<ISecretClientFactory>(),
+            options,
+            Options.Create(new AzureKeyVaultLettuceEncryptOptions()),
+            NullLogger<AzureKeyVaultCertificateRepository>.Instance);
+
+        var cert = TestUtils.CreateTestCert("github.com");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repository.SaveAsync(cert, CancellationToken.None));
+
+        // The raw Azure error does not say what to do about it.
+        Assert.Contains("az keyvault certificate recover", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("github-com", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ASoftDeletedCertificateIsRecoveredWhenTheOptionIsSet()
+    {
+        var (certClient, certClientFactory) = CreateMockCertClient();
+        var options = Options.Create(new LettuceEncryptOptions());
+
+        var imported = 0;
+        certClient
+            .Setup(c => c.ImportCertificateAsync(It.IsAny<ImportCertificateOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                imported++;
+                if (imported == 1)
+                {
+                    throw SoftDeleteConflict();
+                }
+
+                return Task.FromResult(Response.FromValue(default(KeyVaultCertificateWithPolicy)!, null!));
+            });
+
+        var recoverOperation = new Mock<RecoverDeletedCertificateOperation>();
+        certClient
+            .Setup(c => c.StartRecoverDeletedCertificateAsync("github-com", It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(recoverOperation.Object));
+
+        var repository = new AzureKeyVaultCertificateRepository(
+            certClientFactory,
+            Mock.Of<ISecretClientFactory>(),
+            options,
+            Options.Create(new AzureKeyVaultLettuceEncryptOptions { RecoverDeletedCertificates = true }),
+            NullLogger<AzureKeyVaultCertificateRepository>.Instance);
+
+        await repository.SaveAsync(TestUtils.CreateTestCert("github.com"), CancellationToken.None);
+
+        certClient.Verify(
+            c => c.StartRecoverDeletedCertificateAsync("github-com", It.IsAny<CancellationToken>()),
+            Times.Once);
+        Assert.Equal(2, imported);
+    }
+
+    [Fact]
+    public async Task AnUnrelatedConflictIsNotTreatedAsASoftDelete()
+    {
+        var (certClient, certClientFactory) = CreateMockCertClient();
+        var options = Options.Create(new LettuceEncryptOptions());
+
+        certClient
+            .Setup(c => c.ImportCertificateAsync(It.IsAny<ImportCertificateOptions>(), It.IsAny<CancellationToken>()))
+            .Throws(new RequestFailedException(409, "Some other conflict"));
+
+        var repository = new AzureKeyVaultCertificateRepository(
+            certClientFactory,
+            Mock.Of<ISecretClientFactory>(),
+            options,
+            Options.Create(new AzureKeyVaultLettuceEncryptOptions { RecoverDeletedCertificates = true }),
+            NullLogger<AzureKeyVaultCertificateRepository>.Instance);
+
+        await Assert.ThrowsAsync<RequestFailedException>(
+            () => repository.SaveAsync(TestUtils.CreateTestCert("github.com"), CancellationToken.None));
+
+        certClient.Verify(
+            c => c.StartRecoverDeletedCertificateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private static RequestFailedException SoftDeleteConflict()
+        => new(409,
+            "Certificate github-com is currently in a deleted but recoverable state, and its name cannot be " +
+            "reused; in this state, the certificate can only be recovered or purged. " +
+            "innererror: ObjectIsDeletedButRecoverable",
+            "Conflict",
+            null);
+
+    private static (Mock<CertificateClient>, ICertificateClientFactory) CreateMockCertClient()
+    {
+        var certClient = new Mock<CertificateClient>();
+        var factory = new Mock<ICertificateClientFactory>();
+        factory.Setup(c => c.Create()).Returns(certClient.Object);
+        return (certClient, factory.Object);
     }
 }

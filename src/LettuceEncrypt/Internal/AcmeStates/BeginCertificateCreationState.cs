@@ -97,21 +97,41 @@ internal class BeginCertificateCreationState : AcmeState
         return MoveTo<CheckForRenewalState>();
     }
 
-    private async Task SaveCertificateAsync(X509Certificate2 cert, CancellationToken cancellationToken)
+    /// <summary>
+    /// How long the repositories collectively have to store a new certificate.
+    /// </summary>
+    private static readonly TimeSpan s_saveTimeout = TimeSpan.FromMinutes(5);
+
+    private Task SaveCertificateAsync(X509Certificate2 cert, CancellationToken cancellationToken)
     {
         _selector.Add(cert);
 
-        var saveTasks = new List<Task>
-        {
-            Task.Delay(TimeSpan.FromMinutes(5), cancellationToken)
-        };
+        return SaveToRepositoriesAsync(_certificateRepositories, cert, s_saveTimeout, cancellationToken);
+    }
 
+    /// <summary>
+    /// Stores a certificate in every repository, allowing them <paramref name="timeout"/> in total.
+    /// </summary>
+    internal static async Task SaveToRepositoriesAsync(
+        IEnumerable<ICertificateRepository> repositories,
+        X509Certificate2 cert,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        // This bound used to be expressed as a Task.Delay inside the awaited set, which made every
+        // save take five minutes rather than allowing it up to five minutes, and delayed the report
+        // of a failed save by the same amount. Cancelling the repositories bounds it properly.
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+
+        var saveTasks = new List<Task>();
         var errors = new List<Exception>();
-        foreach (var repo in _certificateRepositories)
+
+        foreach (var repo in repositories)
         {
             try
             {
-                saveTasks.Add(repo.SaveAsync(cert, cancellationToken));
+                saveTasks.Add(repo.SaveAsync(cert, timeoutSource.Token));
             }
             catch (Exception ex)
             {
@@ -120,7 +140,35 @@ internal class BeginCertificateCreationState : AcmeState
             }
         }
 
-        await Task.WhenAll(saveTasks);
+        try
+        {
+            await Task.WhenAll(saveTasks);
+        }
+        catch (Exception)
+        {
+            // Awaiting Task.WhenAll rethrows only the first exception. Every repository's failure
+            // matters here, because a certificate saved to none of them is lost on restart.
+            foreach (var task in saveTasks)
+            {
+                if (task.IsFaulted && task.Exception != null)
+                {
+                    errors.AddRange(task.Exception.InnerExceptions);
+                }
+            }
+
+            // A caller-requested shutdown is not a save failure.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            if (timeoutSource.IsCancellationRequested)
+            {
+                errors.Add(new TimeoutException(
+                    $"Timed out after {timeout.TotalMinutes:F0} minutes saving the certificate to " +
+                    $"one or more repositories."));
+            }
+        }
 
         if (errors.Count > 0)
         {
