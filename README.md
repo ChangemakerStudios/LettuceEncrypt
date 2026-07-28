@@ -482,22 +482,46 @@ week to roll off.
 dotnet test LettuceEncrypt.sln
 ```
 
-Versions come from [GitVersion](https://gitversion.net/) rather than being hard-coded. The values in
-`Directory.Build.props` are a fallback for local builds only, which produce packages suffixed
-`-local` so they are never mistaken for a release build.
-
-Releases are published by [deploy.yml](./.github/workflows/deploy.yml) on pushes to `main`. In
-GitVersion's `ContinuousDelivery` mode every commit between tags computes the same version and the
-push uses `--skip-duplicate`, so **tagging is what releases a new version**:
+Versions come from [GitVersion](https://gitversion.net/) rather than being hard-coded, so install it
+before building anything you intend to publish:
 
 ```bash
-git tag v1.3.5
-git push origin v1.3.5
+dotnet tool install --global GitVersion.Tool
 ```
 
-`next-version` in [GitVersion.yml](./GitVersion.yml) sets the starting point until the first tag
-exists; once it does, that line can be removed and versions come from tags alone. Keep
-`VersionPrefix` in `Directory.Build.props` in step with it.
+Without it the build falls back to the version in `Directory.Build.props` and suffixes packages
+`-local`. `push.ps1` refuses to publish those, since they are not real versions.
+
+The branch decides the version shape, using GitVersion's default branch configuration:
+
+| Branch    | Produces        | Notes                                  |
+| --------- | --------------- | -------------------------------------- |
+| `main`    | `1.3.5`         | Stable. Patch increment.               |
+| `develop` | `1.4.0-alpha.N` | Minor increment, `alpha` label.        |
+| other     | inherited       | Derived from the branch it forked from |
+
+`next-version` in [GitVersion.yml](./GitVersion.yml) sets the starting point, because the repository
+has no version tags yet and GitVersion would otherwise begin at 0.1.0. Once a tag exists that line
+can be removed and versions come from tags alone. Keep `VersionPrefix` in `Directory.Build.props` in
+step with it.
+
+### Publishing
+
+[deploy.yml](./.github/workflows/deploy.yml) computes the version, builds, tests, packs, and
+attaches the packages to the workflow run. It does **not** publish — the feed
+(`proget.captiveaire.com`) is on a private network and is unreachable from GitHub-hosted runners.
+
+Publish from a machine on that network:
+
+```powershell
+./build.ps1 -ci
+./push.ps1 -ApiKey <key>
+```
+
+To publish from CI instead, add a self-hosted runner with network access and restore a push step to
+the workflow, or point at a feed reachable from GitHub. Note that the `LettuceEncrypt`,
+`LettuceEncrypt.Azure` and `McMaster.AspNetCore.Kestrel.Certificates` package IDs on nuget.org belong
+to the original author, so publishing this fork there needs ownership of those IDs or a rename.
 
 ## Web Server Scenarios
 
