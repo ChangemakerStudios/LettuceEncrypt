@@ -81,11 +81,20 @@ webBuilder.UseKestrel(k =>
     var appServices = k.ApplicationServices;
     k.ConfigureHttpsDefaults(h =>
     {
-        h.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
         h.UseLettuceEncrypt(appServices);
     });
 });
 ```
+
+> :warning: **`ConfigureHttpsDefaults` replaces rather than accumulates.** Each call discards the
+> delegate from the previous one, and LettuceEncrypt registers its own call internally. Whichever
+> runs last wins, and the order depends on where `AddLettuceEncrypt` sits relative to your Kestrel
+> configuration.
+>
+> In practice this means any *other* HTTPS setting you put in this block, such as
+> `ClientCertificateMode`, may be silently discarded — or may silently start taking effect later if
+> registration order ever changes. Put only `UseLettuceEncrypt` here, and configure other HTTPS
+> options through `Listen` + `UseHttps` on a specific endpoint instead.
 
 #### Example: Listen + UseHttps
 If using `Listen` + `UseHttps` to manually configure Kestrel's address binding, use `UseLettuceEncrypt` like this:
@@ -151,15 +160,36 @@ public void ConfigureServices(IServiceCollection services)
     "LettuceEncrypt": {
         "AzureKeyVault": {
             // Required - specify the name of your key vault
-            "AzureKeyVaultEndpoint": "https://myaccount.vault.azure.net/"
+            "AzureKeyVaultEndpoint": "https://myaccount.vault.azure.net/",
 
             // Optional - specify the secret name used to store your account info (used for cert rewewals)
             // If not specified, name defaults to "le-encrypt-${ACME server URL}"
-            "AccountKeySecretName": "my-lets-encrypt-account"
+            "AccountKeySecretName": "my-lets-encrypt-account",
+
+            // Optional - recover a soft-deleted certificate automatically so its name can be reused.
+            // Defaults to false. See "Soft-deleted certificates" below.
+            "RecoverDeletedCertificates": false
         }
     }
 }
 ```
+
+#### Soft-deleted certificates
+
+A key vault with soft delete enabled reserves the name of a deleted certificate until it is
+recovered or purged. Until then a new certificate cannot be saved under that name. Reading the
+certificate returns "not found" rather than anything revealing the deleted state, so the first sign
+of it is a failure to save a certificate that was otherwise issued successfully — meaning the
+certificate is lost when the process stops.
+
+By default this fails with the command needed to fix it:
+
+```
+az keyvault certificate recover --vault-name <vault> --name <certificate>
+```
+
+Set `RecoverDeletedCertificates` to `true` to have the certificate recovered automatically instead.
+It defaults to `false` because recovering undoes a deletion that someone performed deliberately.
 
 ### Customizing how the certs are saved and loaded
 
@@ -237,14 +267,12 @@ class MyAccountStore: IAccountStore
 
 The ACME protocol supports multiple methods for proving you own a DNS name called "challenge types".
 If you wish to manually select which challenge types are used, set the "AllowedChallengeTypes" method.
-The default value is "Any", which means this library will exhaust all supported challenge types before
-giving up.
 
 Current supported values:
-* `Http01` - The HTTP-01 challenge, which uses a well-known URL on the server and a HTTP request/response.
-* `TlsAlpn01` - The TLS-ALPN-01 challenge, which uses an auto-generated, ephemeral certificate in the TLS handshake.
-* `Dns01` - The DNS-01 challenge, which uses TXT record under that domain name.
-* `Any` - _(default)_ - use HTTP-01 and/or TLS-ALPN-01 DNS-01
+* `Http01` - The HTTP-01 challenge, which uses a well-known URL on the server and a HTTP request/response. Requires port 80 to be reachable from the internet; the certificate authority will not use another port.
+* `TlsAlpn01` - The TLS-ALPN-01 challenge, which uses an auto-generated, ephemeral certificate in the TLS handshake. Requires port 443, and only works with a single instance.
+* `Dns01` - The DNS-01 challenge, which uses TXT record under that domain name. Requires an `IDnsChallengeProvider`. Needs no inbound ports and is unaffected by how many instances you run.
+* `Any` - _(default)_ - try each configured challenge type in turn.
 
 Tip: if you wish to set multiple method types and are use the "appsettings.json" approach, provide a comma-seperated list.
 
@@ -257,33 +285,219 @@ Tip: if you wish to set multiple method types and are use the "appsettings.json"
 }
 ```
 
+### Challenge types are not fallbacks
+
+`Any` reads as "try everything until one works", but a certificate authority does not allow that.
+Under [RFC 8555 section 7.1.6](https://datatracker.ietf.org/doc/html/rfc8555#section-7.1.6), a failed
+challenge moves the **whole authorization** to an invalid state. No other challenge type can succeed
+against it, so the challenge types after the first failure never get a real attempt.
+
+The order attempted is TLS-ALPN-01, then HTTP-01, then DNS-01. So if TLS-ALPN-01 cannot work in your
+deployment, leaving the default of `Any` means HTTP-01 and DNS-01 are never usefully tried, no matter
+how well they are configured.
+
+**Set `AllowedChallengeTypes` to the one challenge type your deployment can actually serve.** When
+the authorization is invalidated this way, the error message says so explicitly rather than
+reporting a confusing "did not receive challenge information" for the later types.
 
 ### When using DNS-01
 
-When using the DNS-01 challenge a `IDnsChallengeProvider` must be add and replace the `NoOpDnsChallengeProvider`
+When using the DNS-01 challenge an `IDnsChallengeProvider` must be registered to replace the
+`NoOpDnsChallengeProvider`. The default provider reports success without publishing anything, so
+DNS-01 is skipped entirely unless you supply a real one.
+
+`AddTxtRecordAsync` returns a `DnsTxtRecordContext`, which is handed back to `RemoveTxtRecordAsync`
+for cleanup. If several instances may order at once, add and remove the individual TXT *value*
+rather than replacing or deleting the whole record set — a certificate authority accepts the record
+if any value at that name matches, so instances can coexist, but only if one does not delete
+another's pending value.
 
 ```c#
+using LettuceEncrypt.Acme;
+
 public class MyDnsChallengeProvider : IDnsChallengeProvider
 {
     private readonly ISomeExternalDnsClient _client;
 
     public MyDnsChallengeProvider(ISomeExternalDnsClient client) => _client = client;
 
-    public Task AddTxtRecordAsync(string domainName, string txt, CancellationToken ct = default)
+    public async Task<DnsTxtRecordContext> AddTxtRecordAsync(
+        string domainName, string txt, CancellationToken ct = default)
     {
-        return _client.AddDnsTxtRecord(domainName, txt, ct);
+        await _client.AddDnsTxtRecord(domainName, txt, ct);
+        return new DnsTxtRecordContext(domainName, txt);
     }
 
-    public Task RemoveTxtRecordAsync(string domainName, string txt, CancellationToken ct = default)
+    public Task RemoveTxtRecordAsync(DnsTxtRecordContext context, CancellationToken ct = default)
     {
-        return _client.RemoveDnsTxtRecord(domainName, txt, ct);
+        return _client.RemoveDnsTxtRecord(context.DomainName, context.Txt, ct);
     }
 }
 ```
 
+```c#
+services.AddLettuceEncrypt();
+services.Replace(ServiceDescriptor.Singleton<IDnsChallengeProvider, MyDnsChallengeProvider>());
+```
+
+## Running more than one instance
+
+Challenge responses are held in the memory of a single process by default. That is correct when
+exactly one instance of your application can receive the certificate authority's validation request.
+
+**When you run multiple instances behind a load balancer, the default does not work.** The instance
+that begins the ACME order is usually not the instance the load balancer sends the validation
+request to, so validation fails — often intermittently, with a different error each time, because
+which instance answers is effectively random.
+
+Symptoms of this include `remote error: tls: no application protocol` from a healthy server, and
+errors mentioning "during secondary validation" (the certificate authority checks from several
+network locations, and each one is a fresh roll of the dice).
+
+The fix is to put challenge state somewhere every instance can read.
+
+### Share challenges through a directory
+
+Use this when all instances share a directory, such as a clustered volume. A per-host volume of the
+same name on each machine does not work — the directory must be genuinely shared.
+
+```c#
+using LettuceEncrypt;
+using Microsoft.Extensions.DependencyInjection;
+
+public void ConfigureServices(IServiceCollection services)
+{
+    services
+        .AddLettuceEncrypt()
+        .PersistDataToDirectory(new DirectoryInfo("/srv/shared/lettuceencrypt/"), "Password123")
+        .PersistHttpChallengesToDirectory(new DirectoryInfo("/srv/shared/lettuceencrypt/"));
+}
+```
+
+This also coordinates ordering between instances, so they do not each place an order and spend the
+certificate authority's duplicate-certificate allowance several times over.
+
+### Share challenges through Azure Key Vault
+
+Use this when instances do not share storage but do share a key vault.
+
+```c#
+using LettuceEncrypt;
+using Microsoft.Extensions.DependencyInjection;
+
+public void ConfigureServices(IServiceCollection services)
+{
+    services
+        .AddLettuceEncrypt()
+        .PersistCertificatesToAzureKeyVault()
+        .PersistHttpChallengesToAzureKeyVault();
+}
+```
+
+The application's vault identity needs secret **set**, **get** and **delete** permissions. Delete is
+only used to clean up spent challenges; without it they remain until they expire an hour after they
+are created.
+
+### You must also restrict the challenge type
+
+```jsonc
+// appsettings.json
+{
+    "LettuceEncrypt": {
+        "AllowedChallengeTypes": "Http01"
+    }
+}
+```
+
+This is not optional. Left at the default of `Any`, the TLS-ALPN-01 challenge is attempted first,
+and it has the same single-instance limitation with no equivalent workaround — the challenge
+certificate has to be held by the process completing the TLS handshake. Its failure then invalidates
+the whole authorization, so HTTP-01 never gets a turn. See
+["Challenge types are not fallbacks"](#challenge-types-are-not-fallbacks).
+
+### Customizing where challenges are stored
+
+Implement `IHttpChallengeResponseStore` to back challenges with any shared store you like.
+
+```c#
+using LettuceEncrypt;
+using Microsoft.Extensions.DependencyInjection;
+
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddLettuceEncrypt();
+    services.Replace(ServiceDescriptor.Singleton<IHttpChallengeResponseStore, MyChallengeStore>());
+}
+
+class MyChallengeStore : IHttpChallengeResponseStore
+{
+    public Task AddChallengeResponseAsync(string token, string response, CancellationToken ct = default)
+    {
+        // store the response so that every instance can read it
+    }
+
+    public Task<string?> GetResponseAsync(string token, CancellationToken ct = default)
+    {
+        // return the response, or null if the token is unknown
+    }
+
+    public Task RemoveChallengeAsync(string token, CancellationToken ct = default)
+    {
+        // discard the challenge
+    }
+}
+```
+
+Use `Replace` rather than `AddSingleton`. The in-memory store is registered unconditionally by
+`AddLettuceEncrypt`, and leaving both registered makes the result depend on registration order.
+
+> :warning: `GetResponseAsync` receives the token straight from the request path, so it is
+> **attacker controlled**, and it is called for every request to a publicly reachable path that
+> scanners probe constantly. Validate the token before using it to address storage — the built-in
+> stores reject anything that is not plain base64url. A store that builds a file path from the token
+> is otherwise open to path traversal, and one backed by a remote service will make a call per probe.
+
 ## Testing in development
 
 See the [developer docs](./test/Integration/) for details on how to test in a non-production environment.
+
+Point at the certificate authority's staging server while you are working things out. Failed
+validations count against a strict rate limit on the production server — five per account, per
+hostname, per hour — and issued certificates count against a separate weekly limit that takes a full
+week to roll off.
+
+```jsonc
+// appsettings.Development.json
+{
+    "LettuceEncrypt": {
+        "UseStagingServer": true
+    }
+}
+```
+
+## Building and releasing
+
+```bash
+./build.ps1          # format check, build, pack, test
+dotnet test LettuceEncrypt.sln
+```
+
+Versions come from [GitVersion](https://gitversion.net/) rather than being hard-coded. The values in
+`Directory.Build.props` are a fallback for local builds only, which produce packages suffixed
+`-local` so they are never mistaken for a release build.
+
+Releases are published by [deploy.yml](./.github/workflows/deploy.yml) on pushes to `main`. In
+GitVersion's `ContinuousDelivery` mode every commit between tags computes the same version and the
+push uses `--skip-duplicate`, so **tagging is what releases a new version**:
+
+```bash
+git tag v1.3.5
+git push origin v1.3.5
+```
+
+`next-version` in [GitVersion.yml](./GitVersion.yml) sets the starting point until the first tag
+exists; once it does, that line can be removed and versions come from tags alone. Keep
+`VersionPrefix` in `Directory.Build.props` in step with it.
 
 ## Web Server Scenarios
 
