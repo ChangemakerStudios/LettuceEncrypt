@@ -1,0 +1,86 @@
+name: Package
+
+# Computes the version with GitVersion, builds, tests and packs. Packages are attached to the run
+# as artifacts.
+#
+# This does not publish. The feed these packages go to, proget.captiveaire.com, resolves to a
+# private address and is not reachable from GitHub-hosted runners. Publishing happens from a machine
+# on the network:
+#
+#   ./build.ps1 -ci
+#   ./push.ps1 -ApiKey <key>
+#
+# To publish from CI instead, either add a self-hosted runner with network access and re-add a push
+# step, or point at a feed that is reachable from GitHub. Note that the LettuceEncrypt,
+# LettuceEncrypt.Azure and McMaster.AspNetCore.Kestrel.Certificates package IDs on nuget.org belong
+# to the original author, so publishing this fork there needs ownership of those IDs or a rename.
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # GitVersion reads the full history to work out the version.
+          fetch-depth: 0
+
+      - name: Setup Dotnet
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.1.0
+        with:
+          versionSpec: '6.x'
+
+      - name: GitVersion
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.1.0
+        with:
+          configFilePath: GitVersion.yml
+
+      - name: Show computed version
+        run: |
+          echo "FullSemVer           = ${{ steps.gitversion.outputs.FullSemVer }}"
+          echo "AssemblySemVer       = ${{ steps.gitversion.outputs.AssemblySemVer }}"
+          echo "AssemblySemFileVer   = ${{ steps.gitversion.outputs.AssemblySemFileVer }}"
+          echo "InformationalVersion = ${{ steps.gitversion.outputs.InformationalVersion }}"
+          if [ -z "${{ steps.gitversion.outputs.FullSemVer }}" ]; then
+            echo "::error::GitVersion produced no version. Packages would be built with the fallback version from Directory.Build.props."
+            exit 1
+          fi
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: >
+          dotnet build --no-restore -c Release
+          -p:Version=${{ steps.gitversion.outputs.FullSemVer }}
+          -p:AssemblyVersion=${{ steps.gitversion.outputs.AssemblySemVer }}
+          -p:FileVersion=${{ steps.gitversion.outputs.AssemblySemFileVer }}
+          -p:InformationalVersion=${{ steps.gitversion.outputs.InformationalVersion }}
+
+      - name: Run tests
+        run: dotnet test --no-build -c Release --verbosity normal
+
+      - name: Pack
+        run: >
+          dotnet pack --no-build -c Release -o artifacts
+          -p:Version=${{ steps.gitversion.outputs.FullSemVer }}
+          -p:PackageVersion=${{ steps.gitversion.outputs.FullSemVer }}
+          -p:AssemblyVersion=${{ steps.gitversion.outputs.AssemblySemVer }}
+          -p:FileVersion=${{ steps.gitversion.outputs.AssemblySemFileVer }}
+          -p:InformationalVersion=${{ steps.gitversion.outputs.InformationalVersion }}
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ steps.gitversion.outputs.FullSemVer }}
+          path: artifacts/*
+          if-no-files-found: error

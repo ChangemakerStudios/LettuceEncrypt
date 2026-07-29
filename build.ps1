@@ -40,14 +40,35 @@ $artifacts = "$PSScriptRoot/artifacts/"
 
 Remove-Item -Recurse $artifacts -ErrorAction Ignore
 
+# Versions come from GitVersion, matching what the Package workflow computes. Without the tool the
+# build falls back to the version in Directory.Build.props, which is suffixed "-local" so those
+# packages are never mistaken for a release. Install with:
+#
+#   dotnet tool install --global GitVersion.Tool
+#
+[string[]] $versionArgs = @()
+if (Get-Command dotnet-gitversion -ErrorAction SilentlyContinue) {
+    $gitVersion = & dotnet-gitversion /output json | ConvertFrom-Json
+    $versionArgs += "-p:Version=$($gitVersion.FullSemVer)"
+    $versionArgs += "-p:PackageVersion=$($gitVersion.FullSemVer)"
+    $versionArgs += "-p:AssemblyVersion=$($gitVersion.AssemblySemVer)"
+    $versionArgs += "-p:FileVersion=$($gitVersion.AssemblySemFileVer)"
+    $versionArgs += "-p:InformationalVersion=$($gitVersion.InformationalVersion)"
+    write-host -f cyan "GitVersion: $($gitVersion.FullSemVer)"
+}
+else {
+    write-host -f yellow 'GitVersion not found. Building with the fallback version from Directory.Build.props.'
+    write-host -f yellow 'These packages are suffixed "-local" and cannot be published.'
+}
+
 [string[]] $formatArgs=@()
 if ($ci) {
     $formatArgs += '--verify-no-changes'
 }
 
 exec dotnet format -v detailed @formatArgs
-exec dotnet build --configuration $Configuration '-warnaserror:CS1591' @MSBuildArgs
-exec dotnet pack --no-restore --no-build --configuration $Configuration -o $artifacts @MSBuildArgs
+exec dotnet build --configuration $Configuration '-warnaserror:CS1591' @versionArgs @MSBuildArgs
+exec dotnet pack --no-restore --no-build --configuration $Configuration -o $artifacts @versionArgs @MSBuildArgs
 
 [string[]] $testArgs=@()
 if ($env:TF_BUILD) {

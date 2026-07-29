@@ -19,8 +19,10 @@ internal class Dns01DomainValidator : DomainOwnershipValidator
         IHostApplicationLifetime appLifetime,
         AcmeClient client,
         ILogger logger,
-        string domainName
-    ) : base(appLifetime, client, logger, domainName)
+        string domainName,
+        TimeSpan validationTimeout,
+        TimeSpan validationPollInterval
+    ) : base(appLifetime, client, logger, domainName, validationTimeout, validationPollInterval)
     {
         _dnsChallengeProvider = dnsChallengeProvider;
     }
@@ -30,7 +32,7 @@ internal class Dns01DomainValidator : DomainOwnershipValidator
         CancellationToken cancellationToken
     )
     {
-        var context = new DnsTxtRecordContext(_domainName, string.Empty);
+        DnsTxtRecordContext? context = null;
         try
         {
             context = await PrepareDns01ChallengeResponseAsync(authzContext, _domainName, cancellationToken);
@@ -38,8 +40,13 @@ internal class Dns01DomainValidator : DomainOwnershipValidator
         }
         finally
         {
-            // Cleanup
-            await _dnsChallengeProvider.RemoveTxtRecordAsync(context, cancellationToken);
+            // Only clean up a record that was actually added. Preparation can fail before the
+            // provider is called, and asking it to remove a record it never created may delete
+            // an unrelated TXT value.
+            if (context != null)
+            {
+                await _dnsChallengeProvider.RemoveTxtRecordAsync(context, cancellationToken);
+            }
         }
     }
 
@@ -53,6 +60,14 @@ internal class Dns01DomainValidator : DomainOwnershipValidator
 
         var account = _client.GetAccountKey();
         var dnsChallenge = await _client.CreateChallengeAsync(authorizationContext, ChallengeTypes.Dns01);
+
+        if (dnsChallenge == null)
+        {
+            // The authorization does not offer this challenge type. This normally means the
+            // authorization has already been invalidated by an earlier, failed challenge.
+            throw new InvalidOperationException(
+                $"Did not receive challenge information for challenge type {ChallengeTypes.Dns01}");
+        }
 
         var dnsTxt = account.DnsTxt(dnsChallenge.Token);
 

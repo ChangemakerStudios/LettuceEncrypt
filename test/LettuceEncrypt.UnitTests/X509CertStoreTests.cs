@@ -64,6 +64,8 @@ public class X509CertStoreTests : IDisposable
     [SkippableFact]
     [SkipOnWindowsCIBuild(SkipReason =
         "On Windows in CI, adding certs to store doesn't work for unclear reasons.")]
+    [SkipOnMacOSCIBuild(SkipReason =
+        "On macOS in CI, adding certs to the keychain fails with 'The specified item could not be found in the keychain'.")]
     public async Task ItSavesCertificates()
     {
         var commonName = "x509store.save.test.natemcmaster.com";

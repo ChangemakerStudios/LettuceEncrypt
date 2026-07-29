@@ -1,1 +1,5 @@
 #nullable enable
+static Microsoft.Extensions.DependencyInjection.AzureLettuceEncryptExtensions.PersistHttpChallengesToAzureKeyVault(this LettuceEncrypt.ILettuceEncryptServiceBuilder! builder) -> LettuceEncrypt.ILettuceEncryptServiceBuilder!
+static Microsoft.Extensions.DependencyInjection.AzureLettuceEncryptExtensions.PersistHttpChallengesToAzureKeyVault(this LettuceEncrypt.ILettuceEncryptServiceBuilder! builder, System.Action<LettuceEncrypt.Azure.AzureKeyVaultLettuceEncryptOptions!>! configure) -> LettuceEncrypt.ILettuceEncryptServiceBuilder!
+LettuceEncrypt.Azure.AzureKeyVaultLettuceEncryptOptions.RecoverDeletedCertificates.get -> bool
+LettuceEncrypt.Azure.AzureKeyVaultLettuceEncryptOptions.RecoverDeletedCertificates.set -> void

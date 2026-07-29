@@ -1,1 +1,14 @@
 #nullable enable
+LettuceEncrypt.LettuceEncryptOptions.ValidationTimeout.get -> System.TimeSpan
+LettuceEncrypt.LettuceEncryptOptions.ValidationTimeout.set -> void
+LettuceEncrypt.LettuceEncryptOptions.ValidationPollInterval.get -> System.TimeSpan
+LettuceEncrypt.LettuceEncryptOptions.ValidationPollInterval.set -> void
+LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.get -> bool
+LettuceEncrypt.LettuceEncryptOptions.EnableChallengeSelfTest.set -> void
+LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.get -> string?
+LettuceEncrypt.LettuceEncryptOptions.ChallengeSelfTestBaseUrl.set -> void
+LettuceEncrypt.IHttpChallengeResponseStore
+LettuceEncrypt.IHttpChallengeResponseStore.AddChallengeResponseAsync(string! token, string! response, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+LettuceEncrypt.IHttpChallengeResponseStore.GetResponseAsync(string! token, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string?>!
+LettuceEncrypt.IHttpChallengeResponseStore.RemoveChallengeAsync(string! token, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+static LettuceEncrypt.FileSystemStorageExtensions.PersistHttpChallengesToDirectory(this LettuceEncrypt.ILettuceEncryptServiceBuilder! builder, System.IO.DirectoryInfo! directory) -> LettuceEncrypt.ILettuceEncryptServiceBuilder!

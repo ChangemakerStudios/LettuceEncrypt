@@ -32,4 +32,22 @@ public class AzureKeyVaultLettuceEncryptOptions
     /// </summary>
     [MaxLength(127)]
     public string? AccountKeySecretName { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether to recover a soft-deleted certificate automatically so that its name
+    /// can be reused. Defaults to false.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A vault with soft delete enabled reserves the name of a deleted certificate until it is
+    /// recovered or purged. Until then a new certificate cannot be saved under that name, and
+    /// importing one fails with HTTP 409.
+    /// </para>
+    /// <para>
+    /// This defaults to false because recovering undoes a deletion someone performed deliberately.
+    /// When it is false, a save that hits this state fails with an explanation of how to recover
+    /// the certificate by hand.
+    /// </para>
+    /// </remarks>
+    public bool RecoverDeletedCertificates { get; set; }
 }
